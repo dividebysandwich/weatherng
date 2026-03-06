@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #121826;
+            --panel-bg: #1e2638;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent-cyan: #06b6d4;
+            --accent-yellow: #eab308;
+            --accent-red: #ef4444;
+            --accent-green: #22c55e;
+            --border-color: #334155;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .dashboard-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .panel {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        .main-chart {
+            height: 400px;
+            width: 100%;
+        }
+
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .status-box {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .status-header {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: var(--text-main);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 1.0rem;
+        }
+
+        .status-label {
+            color: var(--text-muted);
+        }
+
+        .status-value {
+            font-weight: bold;
+        }
+
+        .val-cyan {
+            color: var(--accent-cyan);
+        }
+
+        .val-yellow {
+            color: var(--accent-yellow);
+        }
+
+        .val-red {
+            color: var(--accent-red);
+        }
+
+        .val-green {
+            color: var(--accent-green);
+        }
+
+        .big-value {
+            font-size: 3rem;
+            font-weight: 700;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .wind-rose-container {
+            position: relative;
+            height: 250px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Compass styling */
+        .compass {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            border: 2px solid var(--border-color);
+            position: relative;
+            background: radial-gradient(circle, transparent 30%, rgba(255, 255, 255, 0.03) 70%);
+        }
+
+        .compass-label {
+            position: absolute;
+            color: var(--text-muted);
+            font-weight: bold;
+            font-size: 0.9rem;
+            transform: translate(-50%, -50%);
+        }
+
+        .compass-n {
+            top: 10px;
+            left: 50%;
+        }
+
+        .compass-e {
+            top: 50%;
+            left: calc(100% - 10px);
+        }
+
+        .compass-s {
+            bottom: -10px;
+            left: 50%;
+        }
+
+        .compass-w {
+            top: 50%;
+            left: 10px;
+        }
+
+        .wind-arrow {
+            position: absolute;
+            bottom: calc(36% - 15px);
+            /* Offset by 15px so the 85px pivot sits exactly at the 50% center */
+            left: 50%;
+            width: var(--arrow-width, 36px);
+            height: 100px;
+            background-color: #fff;
+            clip-path: polygon(50% 0%, 100% 100%, 50% 85%, 0% 100%);
+            transform-origin: 50% 55px;
+            transform: translateX(-50%) rotate(0deg);
+            transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            justify-content: center;
+            z-index: 5;
+        }
+
+        .wind-arrow-inner {
+            position: absolute;
+            top: 2px;
+            width: calc(var(--arrow-width, 36px) - 4px);
+            height: 96px;
+            background-color: var(--arrow-color, #4ade80);
+            clip-path: polygon(50% 0%, 100% 100%, 50% 85%, 0% 100%);
+            transform-origin: 50% 55px;
+            /* Inner pivot adjusted slightly for the 2px top offset and 96px height to match the outer 85px point visually */
+        }
+
+        .center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 12px;
+            height: 12px;
+            background-color: var(--text-main);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <!-- Main Chart -->
+        <div class="panel">
+            <div class="main-chart">
+                <canvas id="historyChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Bottom Grid -->
+        <div class="bottom-grid">
+            <!-- Current Temperature -->
+            <div class="panel status-box">
+                <div class="status-header">Current Temperature</div>
+                <div class="big-value val-cyan" id="cur-temp">--°C</div>
+                <div class="status-row">
+                    <span class="status-label">Indoor</span>
+                    <span class="status-value val-yellow" id="cur-itemp">--°C</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Humidity</span>
+                    <span class="status-value val-cyan" id="cur-humid">--%</span>
+                </div>
+            </div>
+
+            <!-- Current Wind -->
+            <div class="panel status-box">
+                <div class="status-header">Current Wind</div>
+                <div class="big-value val-yellow" id="cur-windspeed">-- km/h</div>
+                <div class="status-row">
+                    <span class="status-label">Gust</span>
+                    <span class="status-value val-red" id="cur-gust">-- km/h</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Solar Rad</span>
+                    <span class="status-value val-yellow" id="cur-solar">-- W/m²</span>
+                </div>
+            </div>
+
+            <!-- Wind Rose (Matching Screenshot) -->
+            <div class="wind-rose-panel">
+                <div class="corner-data corner-data-left">
+                    <span class="corner-label">GUST</span>
+                    <span class="corner-value" id="wr-gust">-- km/h</span>
+                </div>
+                <div class="corner-data corner-data-right">
+                    <span class="corner-label">TEMP</span>
+                    <span class="corner-value" id="wr-temp">-- C</span>
+                </div>
+                <div class="wind-rose-container">
+                    <div class="compass">
+                        <div class="compass-label compass-n">N</div>
+                        <div class="compass-label compass-e">E</div>
+                        <div class="compass-label compass-s">S</div>
+                        <div class="compass-label compass-w">W</div>
+                        <div class="wind-arrow" id="wind-arrow">
+                            <div class="wind-arrow-inner"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let historyChart = null;
+
+        function updateWindRose(direction, gustkmh) {
+            const arrow = document.getElementById('wind-arrow');
+            const arrowInner = document.querySelector('.wind-arrow-inner');
+
+            if (arrow && arrowInner) {
+                arrow.style.transform = `translateX(-50%) rotate(${direction}deg)`;
+
+                let thickness = 36;
+                let color = '#4ade80';
+
+                if (gustkmh < 3) {
+                    thickness = 10;
+                    color = 'rgb(150, 150, 150)';
+                } else if (gustkmh <= 6) {
+                    thickness = 14;
+                    color = 'rgb(80, 220, 100)';
+                } else if (gustkmh < 20) {
+                    thickness = 24;
+                    color = 'rgb(170, 220, 50)';
+                } else if (gustkmh < 25) {
+                    thickness = 30;
+                    color = 'rgb(240, 180, 50)';
+                } else if (gustkmh < 30) {
+                    thickness = 36;
+                    color = 'rgb(255, 120, 50)';
+                } else {
+                    thickness = 40;
+                    color = 'rgb(255, 50, 50)';
+                }
+
+                arrow.style.setProperty('--arrow-width', `${thickness}px`);
+                arrowInner.style.setProperty('--arrow-width', `${thickness}px`);
+                arrowInner.style.setProperty('--arrow-color', color);
+            }
+        }
+
+        async function fetchAndUpdateData() {
+            try {
+                // Determine API base path dynamically if UI is hosted on a sub-path
+                // We assume /query is at the root since it's hardcoded in the router.
+                // In production, everything might be behind a reverse proxy. We'll use absolute path /query
+                const response = await fetch('/query');
+                const data = await response.json();
+
+                // Update live text boxes
+                document.getElementById('cur-temp').innerText = `${data.curtemperature.toFixed(1)}°C`;
+                document.getElementById('cur-itemp').innerText = `${data.curtemperatureindoor.toFixed(1)}°C`;
+                document.getElementById('cur-humid').innerText = `${data.curhumidity.toFixed(1)}%`;
+
+                document.getElementById('cur-windspeed').innerText = `${data.curwindspeed.toFixed(1)} km/h`;
+                document.getElementById('cur-gust').innerText = `${data.curwindgust.toFixed(1)} km/h`;
+                document.getElementById('cur-solar').innerText = `${data.cursolarradiation.toFixed(0)} W/m²`;
+
+
+                // Update Wind Rose Panel Corners
+                const wrGustEl = document.getElementById('wr-gust');
+                if (wrGustEl) wrGustEl.innerText = `${data.curwindgust.toFixed(1)} km/h`;
+
+                const wrTempEl = document.getElementById('wr-temp');
+                if (wrTempEl) wrTempEl.innerText = `${data.curtemperature.toFixed(1)} C`;
+
+                updateWindRose(data.curwinddir, data.curwindgust);
+
+                // Setup or update chart
+                const numPoints = data.temperature.length;
+
+                const labels = [];
+                const latestTime = new Date(data.time);
+
+                const dateFormatter = new Intl.DateTimeFormat('en-GB', {
+                    timeStyle: 'short',
+                    timeZone: 'Europe/Paris'
+                });
+
+                // data from ES is 2 mins apart in the halved resolution structure
+                for (let i = 0; i < numPoints; i++) {
+                    const pointDate = new Date(latestTime.getTime() - ((numPoints - 1 - i) * 2 * 60000));
+                    labels.push(dateFormatter.format(pointDate));
+                }
+
+                const chartData = {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Temperature (°C)',
+                            data: data.temperature,
+                            borderColor: '#06b6d4',
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            yAxisID: 'y',
+                            pointRadius: 0,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Wind Speed (km/h)',
+                            data: data.windspeeds,
+                            borderColor: '#eab308',
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            yAxisID: 'y1',
+                            pointRadius: 0,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Solar Rad (W/m²)',
+                            data: data.solarradiation,
+                            borderColor: '#ef4444',
+                            backgroundColor: 'transparent',
+                            borderWidth: 1,
+                            borderDash: [5, 5],
+                            yAxisID: 'y2',
+                            pointRadius: 0,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Rain Amount (mm)',
+                            data: data.rain,
+                            borderColor: '#3b82f6', // blue color for rain
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            yAxisID: 'y3',
+                            pointRadius: 0,
+                            tension: 0.1
+                        }
+                    ]
+                };
+
+                if (!historyChart) {
+                    const ctx = document.getElementById('historyChart').getContext('2d');
+                    Chart.defaults.color = '#94a3b8';
+                    historyChart = new Chart(ctx, {
+                        type: 'line',
+                        data: chartData,
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            interaction: {
+                                mode: 'index',
+                                intersect: false,
+                            },
+                            plugins: {
+                                legend: {
+                                    position: 'top',
+                                    labels: {
+                                        usePointStyle: true,
+                                        padding: 20
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    grid: { color: '#334155', drawBorder: false },
+                                    ticks: { maxTicksLimit: 10 }
+                                },
+                                y: {
+                                    type: 'linear',
+                                    display: true,
+                                    position: 'left',
+                                    title: { display: true, text: 'Temperature (°C)' },
+                                    grid: { color: '#334155', drawBorder: false }
+                                },
+                                y1: {
+                                    type: 'linear',
+                                    display: true,
+                                    position: 'right',
+                                    title: { display: true, text: 'Wind Speed (km/h)' },
+                                    grid: { drawOnChartArea: false },
+                                },
+                                y2: {
+                                    type: 'linear',
+                                    display: true,
+                                    position: 'right',
+                                    title: { display: true, text: 'Solar Rad (W/m²)' },
+                                    grid: { drawOnChartArea: false },
+                                },
+                                y3: {
+                                    type: 'linear',
+                                    display: true,
+                                    position: 'right',
+                                    title: { display: true, text: 'Rain Amount (mm)' },
+                                    grid: { drawOnChartArea: false },
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    historyChart.data = chartData;
+                    historyChart.update('none'); // Update without full animation
+                }
+            } catch (err) {
+                console.error("Failed to fetch weather data", err);
+            }
+        }
+
+        // Initial fetch
+        fetchAndUpdateData();
+
+        // Refresh every 30 seconds
+        setInterval(fetchAndUpdateData, 30000);
+    </script>
+</body>
+
+</html>
