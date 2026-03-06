@@ -162,14 +162,14 @@
 
         .wind-arrow {
             position: absolute;
-            bottom: calc(36% - 15px);
+            bottom: calc(36% - 35px);
             /* Offset by 15px so the 85px pivot sits exactly at the 50% center */
             left: 50%;
             width: var(--arrow-width, 36px);
-            height: 100px;
+            height: 130px;
             background-color: #fff;
             clip-path: polygon(50% 0%, 100% 100%, 50% 85%, 0% 100%);
-            transform-origin: 50% 55px;
+            transform-origin: 50% 65px;
             transform: translateX(-50%) rotate(0deg);
             transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
             display: flex;
@@ -181,10 +181,10 @@
             position: absolute;
             top: 2px;
             width: calc(var(--arrow-width, 36px) - 4px);
-            height: 96px;
+            height: 126px;
             background-color: var(--arrow-color, #4ade80);
             clip-path: polygon(50% 0%, 100% 100%, 50% 85%, 0% 100%);
-            transform-origin: 50% 55px;
+            transform-origin: 50% 65px;
             /* Inner pivot adjusted slightly for the 2px top offset and 96px height to match the outer 85px point visually */
         }
 
@@ -252,6 +252,8 @@
                 </div>
                 <div class="wind-rose-container">
                     <div class="compass">
+                        <canvas id="wind-heatmap" width="200" height="200"
+                            style="position: absolute; top:0; left:0; width: 100%; height: 100%; border-radius: 50%; pointer-events: none; z-index: 1;"></canvas>
                         <div class="compass-label compass-n">N</div>
                         <div class="compass-label compass-e">E</div>
                         <div class="compass-label compass-s">S</div>
@@ -268,6 +270,61 @@
     <script>
         let historyChart = null;
 
+        function updateWindHeatmap(winddirs) {
+            const canvas = document.getElementById('wind-heatmap');
+            if (canvas && winddirs && winddirs.length > 0) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                const numBins = 72;
+                const binSize = 360 / numBins;
+                const bins = new Array(numBins).fill(0);
+                for (let dir of winddirs) {
+                    let bin = Math.floor((dir + binSize / 2) / binSize) % numBins;
+                    if (bin < 0) bin += numBins;
+                    bins[bin]++;
+                }
+
+                let maxFreq = Math.max(...bins);
+                if (maxFreq === 0) maxFreq = 1;
+
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                const innerRadius = 86;
+                const outerRadius = 96;
+                ctx.lineWidth = outerRadius - innerRadius;
+
+                for (let i = 0; i < numBins; i++) {
+                    if (bins[i] > 0) {
+                        let startAngle = (i * binSize - binSize / 2.2 - 90) * Math.PI / 180;
+                        let endAngle = (i * binSize + binSize / 2.2 - 90) * Math.PI / 180;
+
+                        let intensity = bins[i] / maxFreq;
+
+                        let r, g, b;
+                        if (intensity < 0.5) {
+                            let map = intensity * 2;
+                            r = Math.round(6 + (234 - 6) * map);
+                            g = Math.round(182 + (179 - 182) * map);
+                            b = Math.round(212 + (8 - 212) * map);
+                        } else {
+                            let map = (intensity - 0.5) * 2;
+                            r = Math.round(234 + (239 - 234) * map);
+                            g = Math.round(179 + (68 - 179) * map);
+                            b = Math.round(8 + (68 - 8) * map);
+                        }
+
+                        let a = 0.2 + 0.8 * intensity;
+
+                        ctx.beginPath();
+                        ctx.arc(centerX, centerY, (innerRadius + outerRadius) / 2, startAngle, endAngle);
+                        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${a})`;
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
         function updateWindRose(direction, gustkmh) {
             const arrow = document.getElementById('wind-arrow');
             const arrowInner = document.querySelector('.wind-arrow-inner');
@@ -279,22 +336,22 @@
                 let color = '#4ade80';
 
                 if (gustkmh < 3) {
-                    thickness = 15;
+                    thickness = 20;
                     color = 'rgb(150, 150, 150)';
                 } else if (gustkmh <= 6) {
-                    thickness = 20;
+                    thickness = 25;
                     color = 'rgb(80, 220, 100)';
                 } else if (gustkmh < 20) {
-                    thickness = 25;
+                    thickness = 30;
                     color = 'rgb(170, 220, 50)';
                 } else if (gustkmh < 25) {
-                    thickness = 30;
+                    thickness = 35;
                     color = 'rgb(240, 180, 50)';
                 } else if (gustkmh < 30) {
-                    thickness = 35;
+                    thickness = 40;
                     color = 'rgb(255, 120, 50)';
                 } else {
-                    thickness = 40;
+                    thickness = 45;
                     color = 'rgb(255, 50, 50)';
                 }
 
@@ -330,6 +387,7 @@
                 if (wrTempEl) wrTempEl.innerText = `${data.curtemperature.toFixed(1)} C`;
 
                 updateWindRose(data.curwinddir, data.curwindgust);
+                updateWindHeatmap(data.winddirs);
 
                 // Setup or update chart
                 const numPoints = data.temperature.length;
