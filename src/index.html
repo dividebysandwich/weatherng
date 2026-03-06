@@ -162,14 +162,14 @@
 
         .wind-arrow {
             position: absolute;
-            bottom: calc(36% - 35px);
+            bottom: calc(36% - 37px);
             /* Offset by 15px so the 85px pivot sits exactly at the 50% center */
             left: 50%;
             width: var(--arrow-width, 36px);
             height: 130px;
             background-color: #fff;
             clip-path: polygon(50% 0%, 100% 100%, 50% 85%, 0% 100%);
-            transform-origin: 50% 65px;
+            transform-origin: 50% 67px;
             transform: translateX(-50%) rotate(0deg);
             transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
             display: flex;
@@ -184,7 +184,7 @@
             height: 126px;
             background-color: var(--arrow-color, #4ade80);
             clip-path: polygon(50% 0%, 100% 100%, 50% 85%, 0% 100%);
-            transform-origin: 50% 65px;
+            transform-origin: 50% 67px;
             /* Inner pivot adjusted slightly for the 2px top offset and 96px height to match the outer 85px point visually */
         }
 
