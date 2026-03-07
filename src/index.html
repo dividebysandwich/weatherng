@@ -229,10 +229,10 @@
             <!-- Current Wind -->
             <div class="panel status-box">
                 <div class="status-header">Current Wind</div>
-                <div class="big-value val-yellow" id="cur-windspeed">-- km/h</div>
+                <div class="big-value val-yellow" id="cur-gust">-- km/h</div>
                 <div class="status-row">
-                    <span class="status-label">Gust</span>
-                    <span class="status-value val-red" id="cur-gust">-- km/h</span>
+                    <span class="status-label">Average</span>
+                    <span class="status-value val-green" id="cur-windspeed">-- km/h</span>
                 </div>
                 <div class="status-row">
                     <span class="status-label">Solar Rad</span>
@@ -242,14 +242,6 @@
 
             <!-- Wind Rose (Matching Screenshot) -->
             <div class="wind-rose-panel">
-                <div class="corner-data corner-data-left">
-                    <span class="corner-label">GUST</span>
-                    <span class="corner-value" id="wr-gust">-- km/h</span>
-                </div>
-                <div class="corner-data corner-data-right">
-                    <span class="corner-label">TEMP</span>
-                    <span class="corner-value" id="wr-temp">-- C</span>
-                </div>
                 <div class="wind-rose-container">
                     <div class="compass">
                         <canvas id="wind-heatmap" width="200" height="200"
@@ -276,10 +268,15 @@
                 const ctx = canvas.getContext('2d');
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+                // Only use last 15 minutes of data (assuming 2 min per entry)
+                const entriesPerMinute = 1 / 2; // 0.5 entries per minute
+                const numEntries = Math.floor(15 * entriesPerMinute); // 7 entries
+                const lastWinddirs = winddirs.slice(-numEntries);
+
                 const numBins = 72;
                 const binSize = 360 / numBins;
                 const bins = new Array(numBins).fill(0);
-                for (let dir of winddirs) {
+                for (let dir of lastWinddirs) {
                     let bin = Math.floor((dir + binSize / 2) / binSize) % numBins;
                     if (bin < 0) bin += numBins;
                     bins[bin]++;
@@ -379,13 +376,6 @@
                 document.getElementById('cur-solar').innerText = `${data.cursolarradiation.toFixed(0)} W/m²`;
 
 
-                // Update Wind Rose Panel Corners
-                const wrGustEl = document.getElementById('wr-gust');
-                if (wrGustEl) wrGustEl.innerText = `${data.curwindgust.toFixed(1)} km/h`;
-
-                const wrTempEl = document.getElementById('wr-temp');
-                if (wrTempEl) wrTempEl.innerText = `${data.curtemperature.toFixed(1)} C`;
-
                 updateWindRose(data.curwinddir, data.curwindgust);
                 updateWindHeatmap(data.winddirs);
 
@@ -430,7 +420,7 @@
                             tension: 0.1
                         },
                         {
-                            label: 'Solar Rad (W/m²)',
+                            label: 'Solar Radiation (W/m²)',
                             data: data.solarradiation,
                             borderColor: '#ef4444',
                             backgroundColor: 'transparent',
@@ -498,7 +488,7 @@
                                     type: 'linear',
                                     display: true,
                                     position: 'right',
-                                    title: { display: true, text: 'Solar Rad (W/m²)' },
+                                    title: { display: true, text: 'Solar Radiation (W/m²)' },
                                     grid: { drawOnChartArea: false },
                                 },
                                 y3: {
