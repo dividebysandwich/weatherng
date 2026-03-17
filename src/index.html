@@ -269,8 +269,8 @@
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
 
                 // Only use last 15 minutes of data (assuming 2 min per entry)
-                const entriesPerMinute = 1 / 2; // 0.5 entries per minute
-                const numEntries = Math.floor(15 * entriesPerMinute); // 7 entries
+                const entriesPerMinute = 2; // 2 entries per minute
+                const numEntries = Math.floor(15 * entriesPerMinute); // 30 entries
                 const lastWinddirs = winddirs.slice(-numEntries);
 
                 const numBins = 72;
