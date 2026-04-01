@@ -201,24 +201,30 @@ function drawForecastGraph($img, $data, $gx, $gy, $gw, $gh, $max, $lineColor, $f
     if ($count < 2) return;
     $stepX = $gw / ($count - 1);
 
-    // Filled polygon
-    $poly  = [$gx, $gy + $gh];
-    $prevX = $gx;
-    $prevY = $gy + $gh - (($data[0] / $max) * $gh);
-    $poly[] = $prevX; $poly[] = $prevY;
-    for ($i = 1; $i < $count; $i++) {
-        $x = $gx + ($i * $stepX);
-        $y = $gy + $gh - (($data[$i] / $max) * $gh);
-        $poly[] = $x; $poly[] = $y;
-    }
-    $poly[] = $gx + $gw; $poly[] = $gy + $gh;
-    imagefilledpolygon($img, $poly, count($poly)/2, $fillColor);
-
-    // Diagonal stripe hatching (45°, bottom-left to top-right) over forecast region
+    // Diagonal stripe hatching only — no solid fill.
+    // Each unclipped line runs (gx+offset, gy+gh) → (gx+offset+gh, gy), slope dy/dx = -1.
+    // Clip to x ∈ [gx, gx+gw] so stripes never cross the "now" divider on the left
+    // or bleed past the right edge.
+    //   y at x=gx      → (gy+gh) + offset
+    //   y at x=gx+gw   → (gy+gh) − gw + offset
     $stripeSpacing = 8 * $size;
     imagesetthickness($img, 2 * $size);
     for ($offset = -$gh; $offset <= $gw + $gh; $offset += $stripeSpacing) {
-        imageline($img, $gx + $offset, $gy + $gh, $gx + $offset + $gh, $gy, $stripeColor);
+        $x1 = $gx + $offset;
+        $y1 = $gy + $gh;
+        $x2 = $gx + $offset + $gh;
+        $y2 = $gy;
+        if ($x1 < $gx) {               // clip left edge
+            $y1 = (int)($gy + $gh + $offset);
+            $x1 = $gx;
+        }
+        if ($x2 > $gx + $gw) {         // clip right edge
+            $y2 = (int)($gy + $gh - $gw + $offset);
+            $x2 = $gx + $gw;
+        }
+        if ($x1 < $x2) {
+            imageline($img, $x1, $y1, $x2, $y2, $stripeColor);
+        }
     }
 
     // Dashed top border
