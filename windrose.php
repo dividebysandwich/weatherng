@@ -104,7 +104,7 @@ $graphSpeedLine = imagecolorallocate($image, 0, 173, 181);
 // Forecast: same teal as wind speed at 50 % alpha, diagonal hatching
 $fcstFill   = imagecolorallocatealpha($image, 0, 173, 181, 64);  // 50 % transparent teal
 $fcstLine   = imagecolorallocate($image, 0, 173, 181);           // solid teal dashed border
-$fcstStripe = imagecolorallocatealpha($image, 0, 173, 181, 44);  // slightly more opaque for visible hatching
+$fcstStripe = imagecolorallocatealpha($image, 0, 173, 181, 115);
 
 $gridHour  = imagecolorallocatealpha($image, 180, 180, 200, 88);
 $textWhite = imagecolorallocate($image, 240, 240, 240);
