@@ -198,6 +198,16 @@
             border-radius: 50%;
             transform: translate(-50%, -50%);
         }
+
+        @media (max-width: 640px) {
+            body { padding: 10px; gap: 12px; }
+            .dashboard-container { gap: 12px; }
+            .panel { padding: 12px; }
+            .main-chart { height: 200px; }
+            .bottom-grid { grid-template-columns: 1fr; gap: 12px; }
+            .big-value { font-size: 2rem; margin: 10px 0; }
+            .status-row { font-size: 0.9rem; }
+        }
     </style>
 </head>
 
@@ -290,10 +300,58 @@
                 ctx.setLineDash([5, 4]);
                 ctx.stroke();
                 ctx.setLineDash([]);
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
                 ctx.font = 'bold 11px sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText('Now', x, top + 12);
+                ctx.textBaseline = 'bottom';
+                const label = 'Now';
+                const tw = ctx.measureText(label).width;
+                const pad = 4;
+                const rw = tw + pad * 2, rh = 16, rx = x - rw / 2, ry = bottom - rh - 4, rr = 4;
+                ctx.fillStyle = 'rgba(30, 38, 56, 0.85)';
+                ctx.beginPath();
+                ctx.roundRect(rx, ry, rw, rh, rr);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                ctx.fillText(label, x, ry + rh - 1);
+                ctx.restore();
+            }
+        };
+
+        const forecastBgPlugin = {
+            id: 'forecastBg',
+            beforeDatasetsDraw(chart) {
+                const startIdx = chart.options.plugins?.forecastBg?.startIndex;
+                if (startIdx == null) return;
+                const meta = chart.getDatasetMeta(3); // Forecast Temp dataset
+                const point = meta?.data[startIdx];
+                if (!point) return;
+                const { top, bottom, right } = chart.chartArea;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.fillStyle = 'rgba(99, 102, 241, 0.08)';
+                ctx.fillRect(point.x, top, right - point.x, bottom - top);
+                ctx.restore();
+            }
+        };
+
+        const weatherIconPlugin = {
+            id: 'weatherIcons',
+            afterDraw(chart) {
+                const icons = chart.options.plugins?.weatherIcons?.data;
+                if (!icons?.length) return;
+                const meta = chart.getDatasetMeta(3); // Forecast Temp dataset
+                if (!meta) return;
+                const { top } = chart.chartArea;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.font = '15px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                for (const { index, icon } of icons) {
+                    const point = meta.data[index];
+                    if (!point) continue;
+                    ctx.fillText(icon, point.x, top + 4);
+                }
                 ctx.restore();
             }
         };
@@ -425,7 +483,8 @@
 
                 for (let i = 0; i < numPoints; i++) {
                     const pointDate = new Date(latestTime.getTime() - ((numPoints - 1 - i) * 2 * 60000));
-                    labels.push(dateFormatter.format(pointDate));
+                    const snapped = new Date(Math.round(pointDate.getTime() / 3600000) * 3600000);
+                    labels.push(dateFormatter.format(snapped));
                 }
 
                 // Fetch forecast data (best-effort, chart still works without it).
@@ -433,7 +492,7 @@
                 // chart width and history takes 1/3, stepping at the same 2-min interval.
                 const intervalMs = 2 * 60 * 1000;
                 const forecastLabels = [];
-                const forecastTemp = [], forecastWind = [], forecastGusts = [], forecastPrecip = [];
+                const forecastTemp = [], forecastWind = [], forecastGusts = [], forecastPrecip = [], forecastCloud = [];
 
                 try {
                     const forecastResponse = await fetch('/forecast');
@@ -452,6 +511,7 @@
                                     wind:   hourly.wind_speed_10m[j],
                                     gusts:  hourly.wind_gusts_10m[j],
                                     precip: hourly.precipitation[j],
+                                    cloud:  hourly.cloud_cover[j],
                                 };
                             }
 
@@ -459,7 +519,8 @@
                             // each 2-min slot's UTC hour in the forecast map.
                             for (let i = 0; i < numPoints * 2; i++) {
                                 const futureTime = new Date(latestTime.getTime() + (i + 1) * intervalMs);
-                                forecastLabels.push(dateFormatter.format(futureTime));
+                                const snapped = new Date(Math.round(futureTime.getTime() / 3600000) * 3600000);
+                                forecastLabels.push(dateFormatter.format(snapped));
 
                                 const hourFloor = new Date(futureTime);
                                 hourFloor.setUTCMinutes(0, 0, 0);
@@ -468,11 +529,38 @@
                                 forecastWind.push(fc !== undefined  ? fc.wind   : null);
                                 forecastGusts.push(fc !== undefined ? fc.gusts  : null);
                                 forecastPrecip.push(fc !== undefined ? fc.precip : null);
+                                forecastCloud.push(fc !== undefined ? fc.cloud  : null);
                             }
                         }
                     }
                 } catch (e) {
                     console.warn("Forecast data unavailable:", e);
+                }
+
+                // Drop trailing slots where the forecast API returned no data
+                while (forecastLabels.length > 0 && forecastTemp[forecastLabels.length - 1] === null) {
+                    forecastLabels.pop(); forecastTemp.pop(); forecastWind.pop();
+                    forecastGusts.pop(); forecastPrecip.pop(); forecastCloud.pop();
+                }
+
+                // Derive a weather condition icon for each forecast hour; skip repeats
+                const weatherIconData = [];
+                let prevIcon = null;
+                for (let i = 0; i < forecastLabels.length; i += 30) {
+                    const precip = forecastPrecip[i] ?? 0;
+                    const temp   = forecastTemp[i]   ?? 10;
+                    const cloud  = forecastCloud[i]  ?? 0;
+                    let icon;
+                    if      (precip >= 0.5 && temp <= 2) icon = '❄️';
+                    else if (precip >= 0.5)              icon = '🌧️';
+                    else if (cloud  >  85)               icon = '☁️';
+                    else if (cloud  >  60)               icon = '🌥️';
+                    else if (cloud  >  20)               icon = '⛅';
+                    else                                 icon = '☀️';
+                    if (icon !== prevIcon) {
+                        weatherIconData.push({ index: labels.length + i, icon });
+                        prevIcon = icon;
+                    }
                 }
 
                 const allLabels = [...labels, ...forecastLabels];
@@ -506,14 +594,14 @@
                             tension: 0.1
                         },
                         {
-                            label: 'Rain Amount (mm)',
+                            label: 'Rain (mm)',
+                            type: 'bar',
                             data: [...data.rain, ...histNulls],
-                            borderColor: '#3b82f6',
-                            backgroundColor: 'transparent',
-                            borderWidth: 2,
+                            backgroundColor: 'rgba(59, 130, 246, 0.55)',
+                            borderWidth: 0,
                             yAxisID: 'y3',
-                            pointRadius: 0,
-                            tension: 0.1
+                            barPercentage: 1.0,
+                            categoryPercentage: 1.0,
                         },
                         {
                             label: 'Forecast Temp (°C)',
@@ -539,19 +627,19 @@
                         },
                         {
                             label: 'Forecast Precip (mm)',
+                            type: 'bar',
                             data: [...fcstNulls, ...forecastPrecip],
-                            borderColor: '#3b82f6',
-                            backgroundColor: 'transparent',
-                            borderWidth: 2,
-                            borderDash: [4, 4],
+                            backgroundColor: 'rgba(59, 130, 246, 0.35)',
+                            borderWidth: 0,
                             yAxisID: 'y3',
-                            pointRadius: 0,
-                            tension: 0.1
+                            barPercentage: 1.0,
+                            categoryPercentage: 1.0,
                         }
                     ]
                 };
 
                 const nowIndex = labels.length - 1;
+                const isMobile = window.innerWidth < 640;
 
                 if (!historyChart) {
                     const ctx = document.getElementById('historyChart').getContext('2d');
@@ -559,7 +647,7 @@
                     historyChart = new Chart(ctx, {
                         type: 'line',
                         data: chartData,
-                        plugins: [nowLinePlugin],
+                        plugins: [nowLinePlugin, forecastBgPlugin, weatherIconPlugin],
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
@@ -568,10 +656,13 @@
                                 intersect: false,
                             },
                             plugins: {
-                                nowLine: { index: nowIndex },
+                                nowLine:      { index: nowIndex },
+                                forecastBg:   { startIndex: labels.length },
+                                weatherIcons: { data: weatherIconData },
                                 legend: {
                                     position: 'top',
                                     labels: {
+                                        filter: (item) => !['Forecast Temp (°C)', 'Forecast Gusts (km/h)', 'Forecast Precip (mm)'].includes(item.text),
                                         usePointStyle: true,
                                         padding: 20
                                     }
@@ -580,28 +671,31 @@
                             scales: {
                                 x: {
                                     grid: { color: '#334155', drawBorder: false },
-                                    ticks: { maxTicksLimit: 10 }
+                                    ticks: { maxTicksLimit: isMobile ? 4 : 10 }
                                 },
                                 y: {
                                     type: 'linear',
                                     display: true,
                                     position: 'left',
-                                    title: { display: true, text: 'Temperature (°C)' },
-                                    grid: { color: '#334155', drawBorder: false }
+                                    title: { display: !isMobile, text: 'Temperature (°C)' },
+                                    grid: { color: '#334155', drawBorder: false },
+                                    ticks: { maxTicksLimit: isMobile ? 4 : 8 }
                                 },
                                 y1: {
                                     type: 'linear',
                                     display: true,
                                     position: 'right',
-                                    title: { display: true, text: 'Wind Speed (km/h)' },
+                                    title: { display: !isMobile, text: 'Wind Speed (km/h)' },
                                     grid: { drawOnChartArea: false },
+                                    ticks: { maxTicksLimit: isMobile ? 4 : 8 }
                                 },
                                 y3: {
                                     type: 'linear',
                                     display: true,
                                     position: 'right',
-                                    title: { display: true, text: 'Rain Amount (mm)' },
+                                    title: { display: !isMobile, text: 'Rain (mm)' },
                                     grid: { drawOnChartArea: false },
+                                    ticks: { maxTicksLimit: isMobile ? 4 : 8 }
                                 }
                             }
                         }
@@ -609,6 +703,8 @@
                 } else {
                     historyChart.data = chartData;
                     historyChart.options.plugins.nowLine.index = nowIndex;
+                    historyChart.options.plugins.forecastBg.startIndex = labels.length;
+                    historyChart.options.plugins.weatherIcons.data = weatherIconData;
                     historyChart.update('none');
                 }
             } catch (err) {
