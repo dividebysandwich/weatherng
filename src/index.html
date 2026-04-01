@@ -360,9 +360,6 @@
 
         async function fetchAndUpdateData() {
             try {
-                // Determine API base path dynamically if UI is hosted on a sub-path
-                // We assume /query is at the root since it's hardcoded in the router.
-                // In production, everything might be behind a reverse proxy. We'll use absolute path /query
                 const response = await fetch('/query');
                 const data = await response.json();
 
@@ -375,13 +372,11 @@
                 document.getElementById('cur-gust').innerText = `${data.curwindgust.toFixed(1)} km/h`;
                 document.getElementById('cur-solar').innerText = `${data.cursolarradiation.toFixed(0)} W/m²`;
 
-
                 updateWindRose(data.curwinddir, data.curwindgust);
                 updateWindHeatmap(data.winddirs);
 
-                // Setup or update chart
+                // Build historical time labels (2 min per point)
                 const numPoints = data.temperature.length;
-
                 const labels = [];
                 const latestTime = new Date(data.time);
 
@@ -390,19 +385,70 @@
                     timeZone: 'Europe/Paris'
                 });
 
-                // data from ES is 2 mins apart in the halved resolution structure
                 for (let i = 0; i < numPoints; i++) {
                     const pointDate = new Date(latestTime.getTime() - ((numPoints - 1 - i) * 2 * 60000));
                     labels.push(dateFormatter.format(pointDate));
                 }
 
+                // Fetch forecast data (best-effort, chart still works without it).
+                // We generate exactly numPoints forecast slots (same as history) stepping
+                // forward at the same 2-min interval, looking up the matching UTC hourly
+                // bucket. This makes both halves equal width with the same time scale.
+                const intervalMs = 2 * 60 * 1000;
+                const forecastLabels = [];
+                const forecastTemp = [], forecastWind = [], forecastGusts = [], forecastPrecip = [];
+
+                try {
+                    const forecastResponse = await fetch('/forecast');
+                    if (forecastResponse.ok) {
+                        const forecastData = await forecastResponse.json();
+                        if (forecastData && forecastData.hourly) {
+                            // Build a map keyed by UTC hour timestamp.
+                            // Open-Meteo returns times like "2024-01-15T14:00" with
+                            // timezone=UTC, so append 'Z' to force UTC parsing.
+                            const hourly = forecastData.hourly;
+                            const fcByHour = {};
+                            for (let j = 0; j < hourly.time.length; j++) {
+                                const t = new Date(hourly.time[j] + 'Z');
+                                fcByHour[t.getTime()] = {
+                                    temp:   hourly.temperature_2m[j],
+                                    wind:   hourly.wind_speed_10m[j],
+                                    gusts:  hourly.wind_gusts_10m[j],
+                                    precip: hourly.precipitation[j],
+                                };
+                            }
+
+                            // Step forward numPoints × 2 min from latestTime, looking up
+                            // each 2-min slot's UTC hour in the forecast map.
+                            for (let i = 0; i < numPoints; i++) {
+                                const futureTime = new Date(latestTime.getTime() + (i + 1) * intervalMs);
+                                forecastLabels.push(dateFormatter.format(futureTime));
+
+                                const hourFloor = new Date(futureTime);
+                                hourFloor.setUTCMinutes(0, 0, 0);
+                                const fc = fcByHour[hourFloor.getTime()];
+                                forecastTemp.push(fc !== undefined  ? fc.temp   : null);
+                                forecastWind.push(fc !== undefined  ? fc.wind   : null);
+                                forecastGusts.push(fc !== undefined ? fc.gusts  : null);
+                                forecastPrecip.push(fc !== undefined ? fc.precip : null);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Forecast data unavailable:", e);
+                }
+
+                const allLabels = [...labels, ...forecastLabels];
+                const histNulls = new Array(forecastLabels.length).fill(null);
+                const fcstNulls = new Array(labels.length).fill(null);
+
                 const chartData = {
-                    labels: labels,
+                    labels: allLabels,
                     datasets: [
                         {
                             label: 'Temperature (°C)',
-                            data: data.temperature,
-                            borderColor: '#06b6d4',
+                            data: [...data.temperature, ...histNulls],
+                            borderColor: '#22c55e',
                             backgroundColor: 'transparent',
                             borderWidth: 2,
                             yAxisID: 'y',
@@ -411,7 +457,7 @@
                         },
                         {
                             label: 'Wind Speed (km/h)',
-                            data: data.windspeeds,
+                            data: [...data.windspeeds, ...histNulls],
                             borderColor: '#eab308',
                             backgroundColor: 'transparent',
                             borderWidth: 2,
@@ -420,22 +466,44 @@
                             tension: 0.1
                         },
                         {
-                            label: 'Solar Radiation (W/m²)',
-                            data: data.solarradiation,
-                            borderColor: '#ef4444',
+                            label: 'Rain Amount (mm)',
+                            data: [...data.rain, ...histNulls],
+                            borderColor: '#3b82f6',
                             backgroundColor: 'transparent',
-                            borderWidth: 1,
-                            borderDash: [5, 5],
-                            yAxisID: 'y2',
+                            borderWidth: 2,
+                            yAxisID: 'y3',
                             pointRadius: 0,
                             tension: 0.1
                         },
                         {
-                            label: 'Rain Amount (mm)',
-                            data: data.rain,
-                            borderColor: '#3b82f6', // blue color for rain
+                            label: 'Forecast Temp (°C)',
+                            data: [...fcstNulls, ...forecastTemp],
+                            borderColor: '#22c55e',
                             backgroundColor: 'transparent',
                             borderWidth: 2,
+                            borderDash: [4, 4],
+                            yAxisID: 'y',
+                            pointRadius: 0,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Forecast Gusts (km/h)',
+                            data: [...fcstNulls, ...forecastGusts],
+                            borderColor: '#eab308',
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            borderDash: [4, 4],
+                            yAxisID: 'y1',
+                            pointRadius: 0,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Forecast Precip (mm)',
+                            data: [...fcstNulls, ...forecastPrecip],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            borderDash: [4, 4],
                             yAxisID: 'y3',
                             pointRadius: 0,
                             tension: 0.1
@@ -484,13 +552,6 @@
                                     title: { display: true, text: 'Wind Speed (km/h)' },
                                     grid: { drawOnChartArea: false },
                                 },
-                                y2: {
-                                    type: 'linear',
-                                    display: true,
-                                    position: 'right',
-                                    title: { display: true, text: 'Solar Radiation (W/m²)' },
-                                    grid: { drawOnChartArea: false },
-                                },
                                 y3: {
                                     type: 'linear',
                                     display: true,
@@ -503,7 +564,7 @@
                     });
                 } else {
                     historyChart.data = chartData;
-                    historyChart.update('none'); // Update without full animation
+                    historyChart.update('none');
                 }
             } catch (err) {
                 console.error("Failed to fetch weather data", err);

@@ -8,13 +8,14 @@ use axum::{
 use chrono::Utc;
 use elasticsearch::{Elasticsearch, IndexParts, SearchParts, http::transport::Transport};
 use log::{debug, error, info};
+use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::fs::{self, OpenOptions};
-use tokio::io::AsyncWriteExt; // Changed from tracing
+use tokio::io::AsyncWriteExt;
 
 mod web;
 
@@ -25,6 +26,7 @@ pub enum AppError {
     Io(std::io::Error),
     LockPoisoned(String),
     MissingData(String),
+    Forecast(String),
 }
 
 impl From<elasticsearch::Error> for AppError {
@@ -57,6 +59,10 @@ impl IntoResponse for AppError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Data error: {}", e),
             ),
+            AppError::Forecast(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Forecast error: {}", e),
+            ),
         };
         error!("Server Error: {}", error_message);
         (status, error_message).into_response()
@@ -70,11 +76,35 @@ struct AppState {
     client: Elasticsearch,
     cache: Arc<RwLock<Option<CacheEntry>>>,
     energy_state: Arc<RwLock<String>>,
+    http_client: HttpClient,
+    forecast_cache: Arc<RwLock<Option<ForecastCacheEntry>>>,
+    lat: Option<f64>,
+    lon: Option<f64>,
 }
 
 #[derive(Clone)]
 struct CacheEntry {
     data: CachedResult,
+    timestamp: Instant,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ForecastHourly {
+    time: Vec<String>,
+    temperature_2m: Vec<f64>,
+    precipitation: Vec<f64>,
+    wind_speed_10m: Vec<f64>,
+    wind_gusts_10m: Vec<f64>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct WeatherForecast {
+    hourly: ForecastHourly,
+}
+
+#[derive(Clone)]
+struct ForecastCacheEntry {
+    data: WeatherForecast,
     timestamp: Instant,
 }
 
@@ -338,6 +368,86 @@ async fn query_es(state: &AppState) -> Result<CachedResult, AppError> {
     Ok(result)
 }
 
+async fn query_forecast(state: &AppState) -> Result<WeatherForecast, AppError> {
+    let (lat, lon) = match (state.lat, state.lon) {
+        (Some(lat), Some(lon)) => (lat, lon),
+        _ => return Err(AppError::Forecast("LAT/LON not configured".into())),
+    };
+
+    {
+        let cache = state
+            .forecast_cache
+            .read()
+            .map_err(|e| AppError::LockPoisoned(e.to_string()))?;
+        if let Some(entry) = cache.as_ref() {
+            if entry.timestamp.elapsed().as_secs() < 10800 {
+                debug!("Returning cached forecast data");
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    info!("Fetching fresh forecast data from Open-Meteo");
+    let url = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m&forecast_days=2&timezone=UTC&wind_speed_unit=ms",
+        lat, lon
+    );
+
+    let fetch_result: Result<WeatherForecast, AppError> = async {
+        let response = state
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| AppError::Forecast(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(AppError::Forecast(format!(
+                "Open-Meteo API failed: {}",
+                response.status()
+            )));
+        }
+
+        response
+            .json::<WeatherForecast>()
+            .await
+            .map_err(|e| AppError::Forecast(e.to_string()))
+    }
+    .await;
+
+    match fetch_result {
+        Ok(forecast) => {
+            let mut cache = state
+                .forecast_cache
+                .write()
+                .map_err(|e| AppError::LockPoisoned(e.to_string()))?;
+            *cache = Some(ForecastCacheEntry {
+                data: forecast.clone(),
+                timestamp: Instant::now(),
+            });
+            Ok(forecast)
+        }
+        Err(e) => {
+            // On failure, serve stale cache so the chart keeps showing forecast data.
+            // Only propagate the error when the cache has never been populated.
+            let cache = state
+                .forecast_cache
+                .read()
+                .map_err(|err| AppError::LockPoisoned(err.to_string()))?;
+            if let Some(entry) = cache.as_ref() {
+                let msg = match &e {
+                    AppError::Forecast(s) => s.as_str(),
+                    _ => "unknown error",
+                };
+                error!("Open-Meteo fetch failed ({}), serving stale forecast", msg);
+                Ok(entry.data.clone())
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
 // --- Route Handlers ---
 
 async fn handle_weather_report(
@@ -432,6 +542,14 @@ async fn handle_query_es(State(state): State<AppState>) -> Result<Json<CachedRes
     Ok(Json(cached))
 }
 
+async fn handle_forecast(
+    State(state): State<AppState>,
+) -> Result<Json<WeatherForecast>, AppError> {
+    info!("GET Request: /forecast");
+    let forecast = query_forecast(&state).await?;
+    Ok(Json(forecast))
+}
+
 // --- Main Server ---
 
 #[tokio::main]
@@ -446,10 +564,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transport = Transport::single_node(&es_url)?;
     let client = Elasticsearch::new(transport);
 
+    let lat = std::env::var("LAT").ok().and_then(|v| v.parse::<f64>().ok());
+    let lon = std::env::var("LON").ok().and_then(|v| v.parse::<f64>().ok());
+    if lat.is_none() || lon.is_none() {
+        info!("LAT/LON not set — forecast endpoint will be unavailable");
+    }
+
     let state = AppState {
         client,
         cache: Arc::new(RwLock::new(None)),
         energy_state: Arc::new(RwLock::new("{}".to_string())),
+        http_client: HttpClient::new(),
+        forecast_cache: Arc::new(RwLock::new(None)),
+        lat,
+        lon,
     };
 
     let context_path = std::env::var("APP_CONTEXT_PATH").unwrap_or_else(|_| "/weather".to_string());
@@ -468,6 +596,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/weather/report", post(handle_weather_report))
         .route("/queryWeather", get(handle_query_weather))
         .route("/query", get(handle_query_es))
+        .route("/forecast", get(handle_forecast))
         .route(
             "/getEnergy",
             get(|State(s): State<AppState>| async move {
