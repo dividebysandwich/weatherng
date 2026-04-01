@@ -260,6 +260,33 @@
     </div>
 
     <script>
+        const nowLinePlugin = {
+            id: 'nowLine',
+            afterDraw(chart) {
+                const idx = chart.options.plugins?.nowLine?.index;
+                if (idx == null) return;
+                const meta = chart.getDatasetMeta(0);
+                if (!meta || !meta.data[idx]) return;
+                const x = meta.data[idx].x;
+                const { top, bottom } = chart.chartArea;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(x, top);
+                ctx.lineTo(x, bottom);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.setLineDash([5, 4]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Now', x, top + 12);
+                ctx.restore();
+            }
+        };
+
         let historyChart = null;
 
         function updateWindHeatmap(winddirs) {
@@ -511,12 +538,15 @@
                     ]
                 };
 
+                const nowIndex = labels.length - 1;
+
                 if (!historyChart) {
                     const ctx = document.getElementById('historyChart').getContext('2d');
                     Chart.defaults.color = '#94a3b8';
                     historyChart = new Chart(ctx, {
                         type: 'line',
                         data: chartData,
+                        plugins: [nowLinePlugin],
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
@@ -525,6 +555,7 @@
                                 intersect: false,
                             },
                             plugins: {
+                                nowLine: { index: nowIndex },
                                 legend: {
                                     position: 'top',
                                     labels: {
@@ -564,6 +595,7 @@
                     });
                 } else {
                     historyChart.data = chartData;
+                    historyChart.options.plugins.nowLine.index = nowIndex;
                     historyChart.update('none');
                 }
             } catch (err) {
