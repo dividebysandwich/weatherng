@@ -480,6 +480,9 @@
                 const histNulls = new Array(forecastLabels.length).fill(null);
                 const fcstNulls = new Array(labels.length).fill(null);
 
+                const smoothedTemp = movingAverage(data.temperature, 7);
+                const smoothedWind = movingAverage(data.windspeeds, 7);
+
                 const chartData = {
                     labels: allLabels,
                     datasets: [
@@ -548,9 +551,6 @@
                         }
                     ]
                 };
-
-                const smoothedTemp = movingAverage(data.temperature, 7);
-                const smoothedWind = movingAverage(data.windspeeds, 7);
 
                 const nowIndex = labels.length - 1;
 
