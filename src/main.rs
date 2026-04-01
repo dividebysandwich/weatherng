@@ -481,11 +481,11 @@ async fn handle_weather_report(
                 final_val = num_val * 25.4;
             } else if key.ends_with("mph") {
                 // Convert mph to km/h, then immediately divide by 3.6 to get m/s
-                final_val = (num_val * 1.60934) / 3.6;
+                final_val = num_val * 1.60934;
                 final_key = format!("{}kph", &key[..key.len() - 3]);
             } else if key == "maxdailygust" {
                 // Same conversion for the max daily gust
-                final_val = (num_val * 1.60934) / 3.6;
+                final_val = num_val * 1.60934;
                 final_key = format!("{}kph", key);
             }
 
