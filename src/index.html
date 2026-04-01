@@ -260,6 +260,17 @@
     </div>
 
     <script>
+        function movingAverage(data, window) {
+            const half = Math.floor(window / 2);
+            return data.map((_, i) => {
+                const start = Math.max(0, i - half);
+                const end = Math.min(data.length - 1, i + half);
+                let sum = 0;
+                for (let j = start; j <= end; j++) sum += data[j];
+                return Math.round((sum / (end - start + 1)) * 10) / 10;
+            });
+        }
+
         const nowLinePlugin = {
             id: 'nowLine',
             afterDraw(chart) {
@@ -474,7 +485,7 @@
                     datasets: [
                         {
                             label: 'Temperature (°C)',
-                            data: [...data.temperature, ...histNulls],
+                            data: [...smoothedTemp, ...histNulls],
                             borderColor: '#22c55e',
                             backgroundColor: 'transparent',
                             borderWidth: 2,
@@ -484,7 +495,7 @@
                         },
                         {
                             label: 'Wind Speed (km/h)',
-                            data: [...data.windspeeds, ...histNulls],
+                            data: [...smoothedWind, ...histNulls],
                             borderColor: '#eab308',
                             backgroundColor: 'transparent',
                             borderWidth: 2,
@@ -537,6 +548,9 @@
                         }
                     ]
                 };
+
+                const smoothedTemp = movingAverage(data.temperature, 7);
+                const smoothedWind = movingAverage(data.windspeeds, 7);
 
                 const nowIndex = labels.length - 1;
 
