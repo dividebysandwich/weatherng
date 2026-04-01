@@ -389,7 +389,7 @@ async fn query_forecast(state: &AppState) -> Result<WeatherForecast, AppError> {
 
     info!("Fetching fresh forecast data from Open-Meteo");
     let url = format!(
-        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m&forecast_days=2&timezone=UTC&wind_speed_unit=ms",
+        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m&forecast_days=2&timezone=UTC&wind_speed_unit=kmh",
         lat, lon
     );
 
@@ -480,7 +480,7 @@ async fn handle_weather_report(
             } else if key.ends_with("_piezo") || key == "rainratein" {
                 final_val = num_val * 25.4;
             } else if key.ends_with("mph") {
-                // Convert mph to km/h, then immediately divide by 3.6 to get m/s
+                // Convert mph to km/h
                 final_val = num_val * 1.60934;
                 final_key = format!("{}kph", &key[..key.len() - 3]);
             } else if key == "maxdailygust" {
