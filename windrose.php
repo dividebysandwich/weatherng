@@ -101,10 +101,10 @@ $graphGustLine  = imagecolorallocate($image, 255, 46, 99);
 $graphSpeedFill = imagecolorallocatealpha($image, 0, 173, 181, 70);
 $graphSpeedLine = imagecolorallocate($image, 0, 173, 181);
 
-// Forecast: same hue as gusts, more transparent fill + lighter dashed line
-$fcstFill   = imagecolorallocatealpha($image, 255, 46, 99, 108);
-$fcstLine   = imagecolorallocate($image, 255, 110, 150);
-$fcstStripe = imagecolorallocatealpha($image, 255, 70, 110, 112); // subtle vertical hatching
+// Forecast: same teal as wind speed at 50 % alpha, diagonal hatching
+$fcstFill   = imagecolorallocatealpha($image, 0, 173, 181, 64);  // 50 % transparent teal
+$fcstLine   = imagecolorallocate($image, 0, 173, 181);           // solid teal dashed border
+$fcstStripe = imagecolorallocatealpha($image, 0, 173, 181, 44);  // slightly more opaque for visible hatching
 
 $gridHour  = imagecolorallocatealpha($image, 180, 180, 200, 88);
 $textWhite = imagecolorallocate($image, 240, 240, 240);
@@ -214,10 +214,11 @@ function drawForecastGraph($img, $data, $gx, $gy, $gw, $gh, $max, $lineColor, $f
     $poly[] = $gx + $gw; $poly[] = $gy + $gh;
     imagefilledpolygon($img, $poly, count($poly)/2, $fillColor);
 
-    // Vertical stripe hatching over the entire forecast region
-    imagesetthickness($img, 1 * $size);
-    for ($sx = $gx; $sx <= $gx + $gw; $sx += 6 * $size) {
-        imageline($img, $sx, $gy, $sx, $gy + $gh, $stripeColor);
+    // Diagonal stripe hatching (45°, bottom-left to top-right) over forecast region
+    $stripeSpacing = 8 * $size;
+    imagesetthickness($img, 2 * $size);
+    for ($offset = -$gh; $offset <= $gw + $gh; $offset += $stripeSpacing) {
+        imageline($img, $gx + $offset, $gy + $gh, $gx + $offset + $gh, $gy, $stripeColor);
     }
 
     // Dashed top border
