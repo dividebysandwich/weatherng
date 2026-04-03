@@ -479,6 +479,42 @@
             }
         }
 
+        function buildScales(mobile) {
+            const hideAxis = mobile
+                ? { ticks: { display: false }, title: { display: false }, border: { display: false }, afterFit(axis) { axis.width = 0; } }
+                : {};
+            return {
+                x: {
+                    grid: { color: '#334155', drawBorder: false },
+                    ticks: { maxTicksLimit: mobile ? 4 : 10 }
+                },
+                y: {
+                    type: 'linear',
+                    position: 'left',
+                    title: { display: true, text: 'Temperature (°C)' },
+                    grid: { color: '#334155', drawBorder: false },
+                    ticks: { maxTicksLimit: 8 },
+                    ...hideAxis
+                },
+                y1: {
+                    type: 'linear',
+                    position: 'right',
+                    title: { display: true, text: 'Wind Speed (km/h)' },
+                    grid: { drawOnChartArea: false },
+                    ticks: { maxTicksLimit: 8 },
+                    ...hideAxis
+                },
+                y3: {
+                    type: 'linear',
+                    position: 'right',
+                    title: { display: true, text: 'Rain (mm)' },
+                    grid: { drawOnChartArea: false },
+                    ticks: { maxTicksLimit: 8 },
+                    ...hideAxis
+                }
+            };
+        }
+
         async function fetchAndUpdateData() {
             try {
                 const response = await fetch('/query');
@@ -661,6 +697,12 @@
                 const nowIndex = labels.length - 1;
                 const isMobile = window.innerWidth < 640;
 
+                // Recreate chart when mobile state changes so scales rebuild
+                if (historyChart && historyChart._wasMobile !== isMobile) {
+                    historyChart.destroy();
+                    historyChart = null;
+                }
+
                 if (!historyChart) {
                     const ctx = document.getElementById('historyChart').getContext('2d');
                     Chart.defaults.color = '#94a3b8';
@@ -689,38 +731,10 @@
                                     }
                                 }
                             },
-                            scales: {
-                                x: {
-                                    grid: { color: '#334155', drawBorder: false },
-                                    ticks: { maxTicksLimit: isMobile ? 4 : 10 }
-                                },
-                                y: {
-                                    type: 'linear',
-                                    display: !isMobile,
-                                    position: 'left',
-                                    title: { display: !isMobile, text: 'Temperature (°C)' },
-                                    grid: { color: '#334155', drawBorder: false },
-                                    ticks: { maxTicksLimit: 8 }
-                                },
-                                y1: {
-                                    type: 'linear',
-                                    display: !isMobile,
-                                    position: 'right',
-                                    title: { display: !isMobile, text: 'Wind Speed (km/h)' },
-                                    grid: { drawOnChartArea: false },
-                                    ticks: { maxTicksLimit: 8 }
-                                },
-                                y3: {
-                                    type: 'linear',
-                                    display: !isMobile,
-                                    position: 'right',
-                                    title: { display: !isMobile, text: 'Rain (mm)' },
-                                    grid: { drawOnChartArea: false },
-                                    ticks: { maxTicksLimit: 8 }
-                                }
-                            }
+                            scales: buildScales(isMobile)
                         }
                     });
+                    historyChart._wasMobile = isMobile;
                 } else {
                     historyChart.data = chartData;
                     historyChart.options.plugins.nowLine.index = nowIndex;
