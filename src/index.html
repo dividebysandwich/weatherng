@@ -200,11 +200,11 @@
         }
 
         @media (max-width: 640px) {
-            body { padding: 10px; gap: 12px; }
-            .dashboard-container { gap: 12px; }
-            .panel { padding: 12px; }
+            body { padding: 0; gap: 6px; }
+            .dashboard-container { gap: 6px; }
+            .panel { padding: 4px; border-radius: 0; border-left: none; border-right: none; }
             .main-chart { height: 200px; }
-            .bottom-grid { grid-template-columns: 1fr; gap: 12px; }
+            .bottom-grid { grid-template-columns: 1fr; gap: 6px; }
             .big-value { font-size: 2rem; margin: 10px 0; }
             .status-row { font-size: 0.9rem; }
         }
@@ -334,12 +334,37 @@
             }
         };
 
+        const cloudCoverPlugin = {
+            id: 'cloudCover',
+            beforeDatasetsDraw(chart) {
+                const cfg = chart.options.plugins?.cloudCover;
+                if (!cfg?.data?.length) return;
+                const meta = chart.getDatasetMeta(3);
+                if (!meta) return;
+                const { top } = chart.chartArea;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.fillStyle = 'rgba(148, 163, 184, 0.5)';
+                const maxH = 20;
+                for (let i = 0; i < cfg.data.length; i++) {
+                    const cloud = cfg.data[i];
+                    if (cloud == null || cloud <= 0) continue;
+                    const point = meta.data[cfg.startIndex + i];
+                    if (!point) continue;
+                    const nextPoint = meta.data[cfg.startIndex + i + 1];
+                    const w = nextPoint ? nextPoint.x - point.x : 2;
+                    ctx.fillRect(point.x, top, Math.max(w, 1), (cloud / 100) * maxH);
+                }
+                ctx.restore();
+            }
+        };
+
         const weatherIconPlugin = {
             id: 'weatherIcons',
             afterDraw(chart) {
                 const icons = chart.options.plugins?.weatherIcons?.data;
                 if (!icons?.length) return;
-                const meta = chart.getDatasetMeta(3); // Forecast Temp dataset
+                const meta = chart.getDatasetMeta(3);
                 if (!meta) return;
                 const { top } = chart.chartArea;
                 const ctx = chart.ctx;
@@ -543,24 +568,19 @@
                     forecastGusts.pop(); forecastPrecip.pop(); forecastCloud.pop();
                 }
 
-                // Derive a weather condition icon for each forecast hour; skip repeats
+                // Rain/snow icons only; cloud coverage shown as a gray band
                 const weatherIconData = [];
                 let prevIcon = null;
                 for (let i = 0; i < forecastLabels.length; i += 30) {
                     const precip = forecastPrecip[i] ?? 0;
                     const temp   = forecastTemp[i]   ?? 10;
-                    const cloud  = forecastCloud[i]  ?? 0;
-                    let icon;
+                    let icon = null;
                     if      (precip >= 0.5 && temp <= 2) icon = '❄️';
                     else if (precip >= 0.5)              icon = '🌧️';
-                    else if (cloud  >  85)               icon = '☁️';
-                    else if (cloud  >  60)               icon = '🌥️';
-                    else if (cloud  >  20)               icon = '⛅';
-                    else                                 icon = '☀️';
-                    if (icon !== prevIcon) {
+                    if (icon && icon !== prevIcon) {
                         weatherIconData.push({ index: labels.length + i, icon });
-                        prevIcon = icon;
                     }
+                    prevIcon = icon;
                 }
 
                 const allLabels = [...labels, ...forecastLabels];
@@ -647,7 +667,7 @@
                     historyChart = new Chart(ctx, {
                         type: 'line',
                         data: chartData,
-                        plugins: [nowLinePlugin, forecastBgPlugin, weatherIconPlugin],
+                        plugins: [forecastBgPlugin, cloudCoverPlugin, nowLinePlugin, weatherIconPlugin],
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
@@ -658,6 +678,7 @@
                             plugins: {
                                 nowLine:      { index: nowIndex },
                                 forecastBg:   { startIndex: labels.length },
+                                cloudCover:   { data: forecastCloud, startIndex: labels.length },
                                 weatherIcons: { data: weatherIconData },
                                 legend: {
                                     position: 'top',
@@ -675,27 +696,27 @@
                                 },
                                 y: {
                                     type: 'linear',
-                                    display: true,
+                                    display: !isMobile,
                                     position: 'left',
                                     title: { display: !isMobile, text: 'Temperature (°C)' },
                                     grid: { color: '#334155', drawBorder: false },
-                                    ticks: { maxTicksLimit: isMobile ? 4 : 8 }
+                                    ticks: { maxTicksLimit: 8 }
                                 },
                                 y1: {
                                     type: 'linear',
-                                    display: true,
+                                    display: !isMobile,
                                     position: 'right',
                                     title: { display: !isMobile, text: 'Wind Speed (km/h)' },
                                     grid: { drawOnChartArea: false },
-                                    ticks: { maxTicksLimit: isMobile ? 4 : 8 }
+                                    ticks: { maxTicksLimit: 8 }
                                 },
                                 y3: {
                                     type: 'linear',
-                                    display: true,
+                                    display: !isMobile,
                                     position: 'right',
                                     title: { display: !isMobile, text: 'Rain (mm)' },
                                     grid: { drawOnChartArea: false },
-                                    ticks: { maxTicksLimit: isMobile ? 4 : 8 }
+                                    ticks: { maxTicksLimit: 8 }
                                 }
                             }
                         }
@@ -704,6 +725,7 @@
                     historyChart.data = chartData;
                     historyChart.options.plugins.nowLine.index = nowIndex;
                     historyChart.options.plugins.forecastBg.startIndex = labels.length;
+                    historyChart.options.plugins.cloudCover = { data: forecastCloud, startIndex: labels.length };
                     historyChart.options.plugins.weatherIcons.data = weatherIconData;
                     historyChart.update('none');
                 }
