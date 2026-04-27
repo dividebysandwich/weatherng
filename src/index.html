@@ -728,7 +728,19 @@
                                     labels: {
                                         filter: (item) => !['Forecast Temp (°C)', 'Forecast Gusts (km/h)', 'Forecast Precip (mm)'].includes(item.text),
                                         usePointStyle: true,
-                                        padding: 20
+                                        padding: 20,
+                                        generateLabels: (chart) => {
+                                            const items = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                                            items.push({
+                                                text: 'Cloud Cover',
+                                                fillStyle: 'rgba(148, 163, 184, 0.5)',
+                                                strokeStyle: 'rgba(148, 163, 184, 0.5)',
+                                                lineWidth: 0,
+                                                hidden: false,
+                                                pointStyle: 'rect'
+                                            });
+                                            return items;
+                                        }
                                     }
                                 }
                             },
