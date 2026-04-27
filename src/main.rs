@@ -381,7 +381,7 @@ async fn query_forecast(state: &AppState) -> Result<WeatherForecast, AppError> {
             .read()
             .map_err(|e| AppError::LockPoisoned(e.to_string()))?;
         if let Some(entry) = cache.as_ref() {
-            if entry.timestamp.elapsed().as_secs() < 10800 {
+            if entry.timestamp.elapsed().as_secs() < 3600 {
                 debug!("Returning cached forecast data");
                 return Ok(entry.data.clone());
             }
