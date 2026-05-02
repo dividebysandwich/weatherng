@@ -95,6 +95,7 @@ struct ForecastHourly {
     precipitation: Vec<f64>,
     wind_speed_10m: Vec<f64>,
     wind_gusts_10m: Vec<f64>,
+    wind_direction_10m: Vec<f64>,
     cloud_cover: Vec<f64>,
 }
 
@@ -390,7 +391,7 @@ async fn query_forecast(state: &AppState) -> Result<WeatherForecast, AppError> {
 
     info!("Fetching fresh forecast data from Open-Meteo");
     let url = format!(
-        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,cloud_cover&forecast_days=2&timezone=UTC&wind_speed_unit=kmh",
+        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m,cloud_cover&forecast_days=2&timezone=UTC&wind_speed_unit=kmh",
         lat, lon
     );
 

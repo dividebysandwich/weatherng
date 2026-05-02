@@ -50,7 +50,7 @@
         }
 
         .main-chart {
-            height: 280px;
+            height: 320px;
             width: 100%;
         }
 
@@ -203,7 +203,7 @@
             body { padding: 0; gap: 6px; }
             .dashboard-container { gap: 6px; }
             .panel { padding: 4px; border-radius: 0; border-left: none; border-right: none; }
-            .main-chart { height: 200px; }
+            .main-chart { height: 240px; }
             .bottom-grid { grid-template-columns: 1fr; gap: 6px; }
             .big-value { font-size: 2rem; margin: 10px 0; }
             .status-row { font-size: 0.9rem; }
@@ -334,6 +334,81 @@
             }
         };
 
+        const WIND_DIR_BAND_H = 20;
+        const CLOUD_BAND_H = 20;
+        const BAND_GAP = 2;
+        const BANDS_TOTAL_H = WIND_DIR_BAND_H + BAND_GAP + CLOUD_BAND_H;
+
+        function angDiffDeg(a, b) {
+            const d = Math.abs(a - b) % 360;
+            return d > 180 ? 360 - d : d;
+        }
+
+        function cardinalDir(deg) {
+            const names = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+                           'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+            const norm = ((deg % 360) + 360) % 360;
+            return names[Math.round(norm / 22.5) % 16];
+        }
+
+        // Find indices where the wind direction stayed within a 30° range for
+        // a 2-hour window (2-min sampling => 60 points). Returns label markers.
+        function computeStableWindLabels(windDirData) {
+            const WINDOW = 60;
+            const RANGE_DEG = 30;
+            const half = Math.floor(WINDOW / 2);
+            const N = windDirData.length;
+            const stable = new Array(N).fill(false);
+            const meanAt = new Array(N).fill(0);
+
+            for (let i = 0; i < N; i++) {
+                const start = Math.max(0, i - half);
+                const end = Math.min(N, i + half + 1);
+                let sx = 0, sy = 0, n = 0;
+                for (let j = start; j < end; j++) {
+                    const d = windDirData[j];
+                    if (d == null) continue;
+                    const r = d * Math.PI / 180;
+                    sx += Math.cos(r);
+                    sy += Math.sin(r);
+                    n++;
+                }
+                if (n < WINDOW * 0.8) continue;
+                const mean = ((Math.atan2(sy, sx) * 180 / Math.PI) + 360) % 360;
+                let maxDev = 0;
+                for (let j = start; j < end; j++) {
+                    const d = windDirData[j];
+                    if (d == null) continue;
+                    const dev = angDiffDeg(d, mean);
+                    if (dev > maxDev) maxDev = dev;
+                }
+                if (maxDev <= RANGE_DEG / 2) {
+                    stable[i] = true;
+                    meanAt[i] = mean;
+                }
+            }
+
+            const labels = [];
+            let runStart = -1;
+            for (let i = 0; i <= N; i++) {
+                if (i < N && stable[i]) {
+                    if (runStart < 0) runStart = i;
+                } else if (runStart >= 0) {
+                    const runEnd = i - 1;
+                    if (runEnd - runStart + 1 >= WINDOW) {
+                        const center = (runStart + runEnd) >> 1;
+                        labels.push({ index: center, label: cardinalDir(meanAt[center]) });
+                        for (let p = center - WINDOW; p >= runStart; p -= WINDOW)
+                            labels.push({ index: p, label: cardinalDir(meanAt[p]) });
+                        for (let p = center + WINDOW; p <= runEnd; p += WINDOW)
+                            labels.push({ index: p, label: cardinalDir(meanAt[p]) });
+                    }
+                    runStart = -1;
+                }
+            }
+            return labels;
+        }
+
         const cloudCoverPlugin = {
             id: 'cloudCover',
             beforeDatasetsDraw(chart) {
@@ -345,7 +420,7 @@
                 const ctx = chart.ctx;
                 ctx.save();
                 ctx.fillStyle = 'rgba(148, 163, 184, 0.5)';
-                const maxH = 20;
+                const yBase = top - CLOUD_BAND_H;
                 for (let i = 0; i < cfg.data.length; i++) {
                     const cloud = cfg.data[i];
                     if (cloud == null || cloud <= 0) continue;
@@ -353,7 +428,58 @@
                     if (!point) continue;
                     const nextPoint = meta.data[cfg.startIndex + i + 1];
                     const w = nextPoint ? nextPoint.x - point.x : 2;
-                    ctx.fillRect(point.x, top, Math.max(w, 1), (cloud / 100) * maxH);
+                    ctx.fillRect(point.x, yBase, Math.max(w, 1), (cloud / 100) * CLOUD_BAND_H);
+                }
+                ctx.restore();
+            }
+        };
+
+        const windDirectionPlugin = {
+            id: 'windDirection',
+            beforeDatasetsDraw(chart) {
+                const cfg = chart.options.plugins?.windDirection;
+                if (!cfg?.data?.length) return;
+                const { top } = chart.chartArea;
+                const xScale = chart.scales.x;
+                if (!xScale) return;
+                const ctx = chart.ctx;
+                ctx.save();
+                const yTop = top - BANDS_TOTAL_H;
+                for (let i = 0; i < cfg.data.length; i++) {
+                    const dir = cfg.data[i];
+                    if (dir == null) continue;
+                    const x0 = xScale.getPixelForValue(i);
+                    const x1 = i + 1 < cfg.data.length ? xScale.getPixelForValue(i + 1) : x0 + 2;
+                    const w = Math.max(x1 - x0, 1);
+                    // cos(2*dir): +1 at N/S (red), -1 at E/W (green)
+                    const t = (Math.cos(2 * dir * Math.PI / 180) + 1) / 2;
+                    const r = Math.round(34 + (239 - 34) * t);
+                    const g = Math.round(197 + (68 - 197) * t);
+                    const b = Math.round(94 + (68 - 94) * t);
+                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.55)`;
+                    ctx.fillRect(x0, yTop, w, WIND_DIR_BAND_H);
+                }
+                ctx.restore();
+            },
+            afterDatasetsDraw(chart) {
+                const labels = chart.options.plugins?.windDirection?.labels;
+                if (!labels?.length) return;
+                const xScale = chart.scales.x;
+                if (!xScale) return;
+                const { top } = chart.chartArea;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.font = 'bold 11px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                const yMid = top - BANDS_TOTAL_H + WIND_DIR_BAND_H / 2;
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+                ctx.fillStyle = '#eab308';
+                for (const { index, label } of labels) {
+                    const x = xScale.getPixelForValue(index);
+                    ctx.strokeText(label, x, yMid);
+                    ctx.fillText(label, x, yMid);
                 }
                 ctx.restore();
             }
@@ -554,7 +680,7 @@
                 // chart width and history takes 1/3, stepping at the same 2-min interval.
                 const intervalMs = 2 * 60 * 1000;
                 const forecastLabels = [];
-                const forecastTemp = [], forecastWind = [], forecastGusts = [], forecastPrecip = [], forecastCloud = [];
+                const forecastTemp = [], forecastWind = [], forecastGusts = [], forecastPrecip = [], forecastCloud = [], forecastWindDir = [];
 
                 try {
                     const forecastResponse = await fetch('/forecast');
@@ -574,6 +700,7 @@
                                     gusts:  hourly.wind_gusts_10m[j],
                                     precip: hourly.precipitation[j],
                                     cloud:  hourly.cloud_cover[j],
+                                    dir:    hourly.wind_direction_10m[j],
                                 };
                             }
 
@@ -592,6 +719,7 @@
                                 forecastGusts.push(fc !== undefined ? fc.gusts  : null);
                                 forecastPrecip.push(fc !== undefined ? fc.precip : null);
                                 forecastCloud.push(fc !== undefined ? fc.cloud  : null);
+                                forecastWindDir.push(fc !== undefined ? fc.dir : null);
                             }
                         }
                     }
@@ -603,7 +731,11 @@
                 while (forecastLabels.length > 0 && forecastTemp[forecastLabels.length - 1] === null) {
                     forecastLabels.pop(); forecastTemp.pop(); forecastWind.pop();
                     forecastGusts.pop(); forecastPrecip.pop(); forecastCloud.pop();
+                    forecastWindDir.pop();
                 }
+
+                const windDirData = [...(data.winddirs || []), ...forecastWindDir];
+                const windDirLabels = computeStableWindLabels(windDirData);
 
                 // Rain/snow icons only; cloud coverage shown as a gray band
                 const weatherIconData = [];
@@ -710,7 +842,7 @@
                     historyChart = new Chart(ctx, {
                         type: 'line',
                         data: chartData,
-                        plugins: [forecastBgPlugin, cloudCoverPlugin, nowLinePlugin, weatherIconPlugin],
+                        plugins: [forecastBgPlugin, windDirectionPlugin, cloudCoverPlugin, nowLinePlugin, weatherIconPlugin],
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
@@ -722,7 +854,16 @@
                                 nowLine:      { index: nowIndex },
                                 forecastBg:   { startIndex: labels.length },
                                 cloudCover:   { data: forecastCloud, startIndex: labels.length },
+                                windDirection: { data: windDirData, labels: windDirLabels },
                                 weatherIcons: { data: weatherIconData },
+                                title: {
+                                    display: true,
+                                    text: '',
+                                    position: 'top',
+                                    weight: 500,
+                                    padding: { top: 0, bottom: BANDS_TOTAL_H },
+                                    font: { size: 0 }
+                                },
                                 legend: {
                                     position: 'top',
                                     labels: {
@@ -735,6 +876,22 @@
                                                 text: 'Cloud Cover',
                                                 fillStyle: 'rgba(148, 163, 184, 0.5)',
                                                 strokeStyle: 'rgba(148, 163, 184, 0.5)',
+                                                lineWidth: 0,
+                                                hidden: false,
+                                                pointStyle: 'rect'
+                                            });
+                                            items.push({
+                                                text: 'Wind E/W',
+                                                fillStyle: 'rgba(34, 197, 94, 0.55)',
+                                                strokeStyle: 'rgba(34, 197, 94, 0.55)',
+                                                lineWidth: 0,
+                                                hidden: false,
+                                                pointStyle: 'rect'
+                                            });
+                                            items.push({
+                                                text: 'Wind N/S',
+                                                fillStyle: 'rgba(239, 68, 68, 0.55)',
+                                                strokeStyle: 'rgba(239, 68, 68, 0.55)',
                                                 lineWidth: 0,
                                                 hidden: false,
                                                 pointStyle: 'rect'
@@ -753,6 +910,7 @@
                     historyChart.options.plugins.nowLine.index = nowIndex;
                     historyChart.options.plugins.forecastBg.startIndex = labels.length;
                     historyChart.options.plugins.cloudCover = { data: forecastCloud, startIndex: labels.length };
+                    historyChart.options.plugins.windDirection = { data: windDirData, labels: windDirLabels };
                     historyChart.options.plugins.weatherIcons.data = weatherIconData;
                     historyChart.update('none');
                 }
