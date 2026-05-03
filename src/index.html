@@ -486,11 +486,16 @@
                     const x0 = xScale.getPixelForValue(i);
                     const x1 = i + 1 < cfg.data.length ? xScale.getPixelForValue(i + 1) : x0 + 2;
                     const w = Math.max(x1 - x0, 1);
-                    // cos(2*dir): +1 at N/S (red), -1 at E/W (green)
-                    const t = (Math.cos(2 * dir * Math.PI / 180) + 1) / 2;
-                    const r = Math.round(34 + (239 - 34) * t);
-                    const g = Math.round(197 + (68 - 197) * t);
-                    const b = Math.round(94 + (68 - 94) * t);
+                    // Blend three colors by axis weight: blue (N), green (E/W), red (S)
+                    const rad = dir * Math.PI / 180;
+                    const c = Math.cos(rad);
+                    const s = Math.sin(rad);
+                    const wN = Math.max(0, c) ** 2;
+                    const wS = Math.max(0, -c) ** 2;
+                    const wEW = s * s;
+                    const r = Math.round(56 * wN + 15 * wEW + 239 * wS);
+                    const g = Math.round(189 * wN + 70 * wEW + 68 * wS);
+                    const b = Math.round(248 * wN + 35 * wEW + 68 * wS);
                     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.55)`;
                     ctx.fillRect(x0, yTop, w, WIND_DIR_BAND_H);
                 }
@@ -921,15 +926,23 @@
                                                 pointStyle: 'rect'
                                             });
                                             items.push({
-                                                text: 'Wind E/W',
-                                                fillStyle: 'rgba(34, 197, 94, 0.55)',
-                                                strokeStyle: 'rgba(34, 197, 94, 0.55)',
+                                                text: 'Wind N',
+                                                fillStyle: 'rgba(56, 189, 248, 0.55)',
+                                                strokeStyle: 'rgba(56, 189, 248, 0.55)',
                                                 lineWidth: 0,
                                                 hidden: false,
                                                 pointStyle: 'rect'
                                             });
                                             items.push({
-                                                text: 'Wind N/S',
+                                                text: 'Wind E/W',
+                                                fillStyle: 'rgba(15, 70, 35, 0.55)',
+                                                strokeStyle: 'rgba(15, 70, 35, 0.55)',
+                                                lineWidth: 0,
+                                                hidden: false,
+                                                pointStyle: 'rect'
+                                            });
+                                            items.push({
+                                                text: 'Wind S',
                                                 fillStyle: 'rgba(239, 68, 68, 0.55)',
                                                 strokeStyle: 'rgba(239, 68, 68, 0.55)',
                                                 lineWidth: 0,
