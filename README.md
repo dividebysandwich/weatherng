@@ -1,6 +1,6 @@
 # WeatherNG
 
-<img width="1030" height="771" alt="image" src="https://github.com/user-attachments/assets/0e51d388-6715-46ce-9b6b-2b5d5f314c8c" />
+<img width="985" height="658" alt="image" src="https://github.com/user-attachments/assets/ad1c56ef-e554-4314-a43f-3476376fee6e" />
 
 A custom backend for EcoWitt weather stations. Simply configure your station to send data to this program on ```/weather/report``` and it will store it in elasticsearch and respond to queries. 
 
