@@ -649,6 +649,10 @@
         const DEFAULT_STATION = { lat: 48.221059, lon: 15.768487 };
         const MAP_ZOOM = 7; // RainViewer's free tiles cap at zoom 7
 
+        // Higher-resolution Austria outline (~545 points) is served from the
+        // backend's /austria.geojson endpoint (embedded at compile time).
+        // Source: georgique/world-geojson.
+
         const radarState = {
             map: null,
             host: null,
@@ -676,9 +680,33 @@
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> &middot; Radar &copy; <a href="https://www.rainviewer.com/">RainViewer</a>',
             }).addTo(radarState.map);
 
-            L.marker([center.lat, center.lon], { title: 'Weather station' })
+            // Austria outline drawn above the radar layer (overlayPane > tilePane).
+            fetch('/austria.geojson')
+                .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+                .then(geo => {
+                    L.geoJSON(geo, {
+                        style: {
+                            color: '#f1f5f9',
+                            weight: 2,
+                            opacity: 0.9,
+                            fill: false,
+                            interactive: false,
+                        },
+                    }).addTo(radarState.map);
+                })
+                .catch(err => console.warn('Austria outline failed to load:', err));
+
+            // CircleMarker (rather than the default pin) so we can color it
+            // with the dashboard's accent green without shipping marker assets.
+            L.circleMarker([center.lat, center.lon], {
+                radius: 7,
+                color: '#ffffff',
+                weight: 2,
+                fillColor: '#22c55e',
+                fillOpacity: 1,
+            })
                 .addTo(radarState.map)
-                .bindPopup('Weather station');
+                .bindTooltip('Weather station', { direction: 'top', offset: [0, -8] });
         }
 
         function buildFrameLayer(host, frame) {

@@ -560,6 +560,18 @@ async fn handle_config(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
+async fn handle_austria_geojson() -> impl IntoResponse {
+    // Static asset — embedded at compile time. Source: georgique/world-geojson.
+    const GEOJSON: &str = include_str!("austria.geojson");
+    (
+        [
+            ("Content-Type", "application/geo+json"),
+            ("Cache-Control", "public, max-age=86400, immutable"),
+        ],
+        GEOJSON,
+    )
+}
+
 // --- Main Server ---
 
 #[tokio::main]
@@ -608,6 +620,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/query", get(handle_query_es))
         .route("/forecast", get(handle_forecast))
         .route("/config", get(handle_config))
+        .route("/austria.geojson", get(handle_austria_geojson))
         .route(
             "/getEnergy",
             get(|State(s): State<AppState>| async move {
