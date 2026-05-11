@@ -81,7 +81,6 @@ struct AppState {
     forecast_cache: Arc<RwLock<Option<ForecastCacheEntry>>>,
     lat: Option<f64>,
     lon: Option<f64>,
-    context_path: String,
 }
 
 #[derive(Clone)]
@@ -594,6 +593,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("LAT/LON not set — forecast endpoint will be unavailable");
     }
 
+    let state = AppState {
+        client,
+        cache: Arc::new(RwLock::new(None)),
+        energy_state: Arc::new(RwLock::new("{}".to_string())),
+        http_client: HttpClient::new(),
+        forecast_cache: Arc::new(RwLock::new(None)),
+        lat,
+        lon,
+    };
+
     let context_path = std::env::var("APP_CONTEXT_PATH").unwrap_or_else(|_| "/weather".to_string());
     let context_path = if !context_path.starts_with("/") {
         format!("/{}", context_path)
@@ -606,18 +615,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         context_path
     };
 
-    let state = AppState {
-        client,
-        cache: Arc::new(RwLock::new(None)),
-        energy_state: Arc::new(RwLock::new("{}".to_string())),
-        http_client: HttpClient::new(),
-        forecast_cache: Arc::new(RwLock::new(None)),
-        lat,
-        lon,
-        context_path: context_path.clone(),
-    };
-
-    let api_routes = Router::new()
+    let mut app = Router::new()
         .route("/weather/report", post(handle_weather_report))
         .route("/queryWeather", get(handle_query_weather))
         .route("/query", get(handle_query_es))
@@ -645,14 +643,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
         );
 
-    let app = if context_path == "/" {
-        api_routes.route("/", get(web::ui_handler))
+    if context_path == "/" {
+        app = app.route("/", get(web::ui_handler));
     } else {
-        Router::new()
-            .route(&context_path, get(web::ui_handler))
-            .route(&format!("{}/", context_path), get(web::ui_handler))
-            .nest(&context_path, api_routes)
-    };
+        app = app.route(&context_path, get(web::ui_handler));
+        app = app.route(&format!("{}/", context_path), get(web::ui_handler));
+    }
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
