@@ -16,7 +16,6 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
-use tower_http::cors::{Any, CorsLayer};
 
 mod web;
 
@@ -654,12 +653,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .nest(&context_path, api_routes)
     };
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = app.with_state(state).layer(cors);
+    let app = app.with_state(state);
 
     let listen_uri = std::env::var("LISTEN_URI").unwrap_or_else(|_| "0.0.0.0:8200".to_string());
     let listener = tokio::net::TcpListener::bind(&listen_uri).await?;
