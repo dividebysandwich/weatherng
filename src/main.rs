@@ -552,6 +552,14 @@ async fn handle_forecast(
     Ok(Json(forecast))
 }
 
+async fn handle_config(State(state): State<AppState>) -> Json<Value> {
+    info!("GET Request: /config");
+    Json(json!({
+        "lat": state.lat.unwrap_or(48.221059),
+        "lon": state.lon.unwrap_or(15.768487),
+    }))
+}
+
 // --- Main Server ---
 
 #[tokio::main]
@@ -599,6 +607,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/queryWeather", get(handle_query_weather))
         .route("/query", get(handle_query_es))
         .route("/forecast", get(handle_forecast))
+        .route("/config", get(handle_config))
         .route(
             "/getEnergy",
             get(|State(s): State<AppState>| async move {

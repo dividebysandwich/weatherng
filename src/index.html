@@ -6,6 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Weather Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <style>
         :root {
             --bg-color: #121826;
@@ -221,6 +225,67 @@
             transform: translate(-50%, -50%);
         }
 
+        .map-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .map-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        #weather-map {
+            height: 520px;
+            width: 100%;
+            border-radius: 8px;
+            background-color: #0b0f1a;
+        }
+
+        .map-time {
+            font-variant-numeric: tabular-nums;
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .map-time.is-forecast {
+            color: var(--accent-yellow);
+        }
+
+        .map-progress {
+            position: relative;
+            height: 6px;
+            background-color: rgba(255, 255, 255, 0.08);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .map-progress-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background-color: var(--accent-cyan);
+            width: 0%;
+            transition: width 200ms linear;
+        }
+
+        .map-progress-now {
+            position: absolute;
+            top: -2px;
+            bottom: -2px;
+            width: 2px;
+            background-color: rgba(255, 255, 255, 0.6);
+        }
+
+        .leaflet-container {
+            background: #0b0f1a;
+        }
+
         @media (max-width: 640px) {
             body { padding: 0; gap: 6px; }
             .dashboard-container { gap: 6px; }
@@ -245,6 +310,7 @@
                 transform: scale(0.8);
                 transform-origin: center center;
             }
+            #weather-map { height: 360px; }
         }
     </style>
 </head>
@@ -300,6 +366,24 @@
                     <span class="status-label">Solar Rad</span>
                     <span class="status-value val-yellow" id="cur-solar">-- W/m²</span>
                 </div>
+            </div>
+        </div>
+
+        <!-- Weather Radar Map -->
+        <div class="panel map-panel">
+            <div class="map-header-row">
+                <div class="status-header" style="margin: 0; padding: 0; border: none;">
+                    Precipitation Radar — Austria
+                </div>
+                <div>
+                    <span class="status-label">Frame:</span>
+                    <span class="map-time" id="map-time">--:--</span>
+                </div>
+            </div>
+            <div id="weather-map"></div>
+            <div class="map-progress" id="map-progress">
+                <div class="map-progress-bar" id="map-progress-bar"></div>
+                <div class="map-progress-now" id="map-progress-now"></div>
             </div>
         </div>
     </div>
@@ -548,6 +632,182 @@
         };
 
         let historyChart = null;
+
+        // ---------- Weather radar map (RainViewer) ----------
+        // RainViewer's free public API exposes ~2 hours of past radar frames at
+        // 10-minute intervals plus a short nowcast. Frames are 256px tiles served
+        // from a per-frame path. Docs: https://www.rainviewer.com/api.html
+        const RAINVIEWER_API = 'https://api.rainviewer.com/public/weather-maps.json';
+        const FRAME_INTERVAL_MS = 500;   // time between frames during animation
+        const HOLD_LATEST_MS = 3000;     // pause on the latest observed frame
+        // Re-fetch the RainViewer manifest every 5 min. New past frames are
+        // published every ~10 min; this ensures we pick them up promptly and
+        // restart the loop from frame 0 with the refreshed tile set.
+        const FRAMES_REFRESH_MS = 5 * 60 * 1000;
+
+        // Default station location — overridden by /config (LAT/LON env vars).
+        const DEFAULT_STATION = { lat: 48.221059, lon: 15.768487 };
+        const MAP_ZOOM = 7; // RainViewer's free tiles cap at zoom 7
+
+        const radarState = {
+            map: null,
+            host: null,
+            frames: [],          // [{ path, time, kind }] kind = 'past' | 'nowcast'
+            latestPastIdx: -1,   // index of the most recent observed (non-forecast) frame
+            layers: [],          // Leaflet layers, parallel to frames
+            currentIdx: -1,
+            timer: null,
+            paused: false,
+        };
+
+        function initRadarMap(center) {
+            if (radarState.map) return;
+            radarState.map = L.map('weather-map', {
+                zoomControl: true,
+                attributionControl: true,
+                preferCanvas: true,
+            }).setView([center.lat, center.lon], MAP_ZOOM);
+
+            // CartoDB "Dark Matter (no labels)" — dark base map without place names.
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+                maxZoom: 12,
+                minZoom: 5,
+                subdomains: 'abcd',
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> &middot; Radar &copy; <a href="https://www.rainviewer.com/">RainViewer</a>',
+            }).addTo(radarState.map);
+
+            L.marker([center.lat, center.lon], { title: 'Weather station' })
+                .addTo(radarState.map)
+                .bindPopup('Weather station');
+        }
+
+        function buildFrameLayer(host, frame) {
+            // RainViewer tile URL: {host}{path}/{size}/{z}/{x}/{y}/{color}/{options}.png
+            // size=256, color=2 (universal blue/green/yellow/red), options "1_1" = smooth+snow
+            const url = `${host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+            return L.tileLayer(url, {
+                tileSize: 256,
+                opacity: 0,         // shown only when its turn comes up
+                zIndex: 50,
+                // Note: crossOrigin is intentionally omitted. RainViewer's tile
+                // servers don't reliably send CORS headers, and we only display
+                // the tiles (no canvas pixel reads), so CORS isn't needed.
+            });
+        }
+
+        function formatFrameTime(unixSeconds) {
+            const d = new Date(unixSeconds * 1000);
+            return new Intl.DateTimeFormat('en-GB', {
+                hour: '2-digit', minute: '2-digit',
+                timeZone: 'Europe/Vienna',
+            }).format(d);
+        }
+
+        function showFrame(idx) {
+            const { frames, layers, map } = radarState;
+            if (!frames.length || !map) return;
+
+            for (let i = 0; i < layers.length; i++) {
+                if (i === idx) layers[i].setOpacity(0.75);
+                else layers[i].setOpacity(0);
+            }
+
+            radarState.currentIdx = idx;
+            const frame = frames[idx];
+            const timeEl = document.getElementById('map-time');
+            const progEl = document.getElementById('map-progress-bar');
+            if (timeEl) {
+                timeEl.textContent = formatFrameTime(frame.time);
+                timeEl.classList.toggle('is-forecast', frame.kind === 'nowcast');
+            }
+            if (progEl) {
+                const pct = ((idx + 1) / frames.length) * 100;
+                progEl.style.width = `${pct}%`;
+            }
+        }
+
+        function positionNowMarker() {
+            const nowEl = document.getElementById('map-progress-now');
+            if (!nowEl || !radarState.frames.length) return;
+            // Marker sits at the boundary between past and nowcast frames.
+            const boundary = radarState.latestPastIdx + 1;
+            const pct = (boundary / radarState.frames.length) * 100;
+            nowEl.style.left = `${pct}%`;
+        }
+
+        function scheduleNextFrame() {
+            clearTimeout(radarState.timer);
+            if (radarState.paused || !radarState.frames.length) return;
+
+            const isLatestObserved = radarState.currentIdx === radarState.latestPastIdx;
+            const isLastFrame = radarState.currentIdx === radarState.frames.length - 1;
+            const delay = (isLatestObserved || isLastFrame) ? HOLD_LATEST_MS : FRAME_INTERVAL_MS;
+
+            radarState.timer = setTimeout(() => {
+                let next = radarState.currentIdx + 1;
+                if (next >= radarState.frames.length) next = 0;
+                showFrame(next);
+                scheduleNextFrame();
+            }, delay);
+        }
+
+        async function loadRadarFrames() {
+            try {
+                const resp = await fetch(RAINVIEWER_API);
+                if (!resp.ok) throw new Error(`RainViewer HTTP ${resp.status}`);
+                const data = await resp.json();
+                const host = data.host;
+                const past = (data.radar?.past || []).map(f => ({ ...f, kind: 'past' }));
+                const nowcast = (data.radar?.nowcast || []).map(f => ({ ...f, kind: 'nowcast' }));
+                const frames = [...past, ...nowcast];
+                if (!frames.length) return;
+
+                // Tear down old layers if any
+                for (const layer of radarState.layers) {
+                    radarState.map.removeLayer(layer);
+                }
+
+                radarState.host = host;
+                radarState.frames = frames;
+                radarState.latestPastIdx = past.length - 1;
+                radarState.layers = frames.map(f => buildFrameLayer(host, f).addTo(radarState.map));
+
+                positionNowMarker();
+                showFrame(0);
+                scheduleNextFrame();
+            } catch (err) {
+                console.warn('Radar frame load failed:', err);
+            }
+        }
+
+        async function fetchStationLocation() {
+            try {
+                const resp = await fetch('/config');
+                if (!resp.ok) throw new Error(`config HTTP ${resp.status}`);
+                const cfg = await resp.json();
+                if (typeof cfg.lat === 'number' && typeof cfg.lon === 'number') {
+                    return { lat: cfg.lat, lon: cfg.lon };
+                }
+            } catch (err) {
+                console.warn('Falling back to default station location:', err);
+            }
+            return DEFAULT_STATION;
+        }
+
+        async function startRadar() {
+            const center = await fetchStationLocation();
+            initRadarMap(center);
+            loadRadarFrames();
+            setInterval(loadRadarFrames, FRAMES_REFRESH_MS);
+
+            // Pause animation while the tab is hidden to avoid wasted requests.
+            document.addEventListener('visibilitychange', () => {
+                radarState.paused = document.hidden;
+                if (!radarState.paused) scheduleNextFrame();
+                else clearTimeout(radarState.timer);
+            });
+        }
+        // ---------- end radar map ----------
 
         function updateWindHeatmap(winddirs) {
             const canvas = document.getElementById('wind-heatmap');
@@ -977,6 +1237,9 @@
 
         // Refresh every 30 seconds
         setInterval(fetchAndUpdateData, 30000);
+
+        // Boot the radar map (independent of the chart refresh loop)
+        startRadar();
     </script>
 </body>
 
