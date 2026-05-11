@@ -637,6 +637,9 @@
         // RainViewer's free public API exposes ~2 hours of past radar frames at
         // 10-minute intervals plus a short nowcast. Frames are 256px tiles served
         // from a per-frame path. Docs: https://www.rainviewer.com/api.html
+        // Backend mount point — substituted server-side at template render time.
+        const CONTEXT_PATH = '__CONTEXT_PATH__';
+
         const RAINVIEWER_API = 'https://api.rainviewer.com/public/weather-maps.json';
         const FRAME_INTERVAL_MS = 500;   // time between frames during animation
         const HOLD_LATEST_MS = 3000;     // pause on the latest observed frame
@@ -681,7 +684,7 @@
             }).addTo(radarState.map);
 
             // Austria outline drawn above the radar layer (overlayPane > tilePane).
-            fetch('/austria.geojson')
+            fetch(`${CONTEXT_PATH}/austria.geojson`)
                 .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
                 .then(geo => {
                     L.geoJSON(geo, {
@@ -810,7 +813,7 @@
 
         async function fetchStationLocation() {
             try {
-                const resp = await fetch('/config');
+                const resp = await fetch(`${CONTEXT_PATH}/config`);
                 if (!resp.ok) throw new Error(`config HTTP ${resp.status}`);
                 const cfg = await resp.json();
                 if (typeof cfg.lat === 'number' && typeof cfg.lon === 'number') {
@@ -972,7 +975,7 @@
 
         async function fetchAndUpdateData() {
             try {
-                const response = await fetch('/query');
+                const response = await fetch(`${CONTEXT_PATH}/query`);
                 const data = await response.json();
 
                 // Update live text boxes
@@ -1011,7 +1014,7 @@
                 const forecastTemp = [], forecastWind = [], forecastGusts = [], forecastPrecip = [], forecastCloud = [], forecastWindDir = [];
 
                 try {
-                    const forecastResponse = await fetch('/forecast');
+                    const forecastResponse = await fetch(`${CONTEXT_PATH}/forecast`);
                     if (forecastResponse.ok) {
                         const forecastData = await forecastResponse.json();
                         if (forecastData && forecastData.hourly) {
