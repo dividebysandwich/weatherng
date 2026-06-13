@@ -12,11 +12,13 @@ use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
+mod mcp;
 mod web;
 
 // --- Error Handling ---
@@ -37,6 +39,18 @@ impl From<elasticsearch::Error> for AppError {
 impl From<std::io::Error> for AppError {
     fn from(inner: std::io::Error) -> Self {
         AppError::Io(inner)
+    }
+}
+
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppError::Elastic(e) => write!(f, "Elasticsearch error: {}", e),
+            AppError::Io(e) => write!(f, "I/O error: {}", e),
+            AppError::LockPoisoned(e) => write!(f, "Lock error: {}", e),
+            AppError::MissingData(e) => write!(f, "Data error: {}", e),
+            AppError::Forecast(e) => write!(f, "Forecast error: {}", e),
+        }
     }
 }
 
@@ -80,6 +94,8 @@ struct AppState {
     forecast_cache: Arc<RwLock<Option<ForecastCacheEntry>>>,
     lat: Option<f64>,
     lon: Option<f64>,
+    mcp_sessions: mcp::McpSessions,
+    mcp_session_counter: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -600,6 +616,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         forecast_cache: Arc::new(RwLock::new(None)),
         lat,
         lon,
+        mcp_sessions: Arc::new(RwLock::new(HashMap::new())),
+        mcp_session_counter: Arc::new(AtomicU64::new(1)),
     };
 
     let context_path = std::env::var("APP_CONTEXT_PATH").unwrap_or_else(|_| "/weather".to_string());
@@ -619,6 +637,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/queryWeather", get(handle_query_weather))
         .route("/query", get(handle_query_es))
         .route("/forecast", get(handle_forecast))
+        .route("/mcp/sse", get(mcp::mcp_sse_handler))
+        .route("/mcp/message", post(mcp::mcp_message_handler))
         .route("/config", get(handle_config))
         .route("/austria.geojson", get(handle_austria_geojson))
         .route(
