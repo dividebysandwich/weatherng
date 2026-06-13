@@ -250,41 +250,33 @@ fn tools_list(state: &AppState) -> Vec<Value> {
         json!({
             "name": "get_current_live_weather_observation",
             "description": format!(
-                "Return the single most recent live weather measurement from the physical \
-                 weather station located at {location}. Values are the latest readings from \
-                 the station's own sensors (NOT a forecast). Includes outdoor and indoor \
-                 temperature (°C), relative humidity (%), barometric pressure reduced to sea \
-                 level / QNH (hPa), wind speed and gust (km/h), wind direction (degrees, \
-                 meteorological, 0=N/90=E/180=S/270=W), rainfall (mm) and solar radiation \
-                 (W/m²). Takes no arguments."
+                "Latest live measurement from the physical weather station at {location} \
+                 (sensor readings, not a forecast). Fields with units: outdoor/indoor \
+                 temperature °C, relative humidity %, sea-level pressure (QNH) hPa, wind \
+                 speed/gust km/h, wind direction meteorological degrees, rainfall mm, solar \
+                 radiation W/m². No arguments."
             ),
             "inputSchema": no_arguments_schema(),
         }),
         json!({
             "name": "get_historical_measured_weather_timeseries",
             "description": format!(
-                "Return the recent measured-weather time series (approximately the last 7 \
-                 hours, up to 600 samples taken roughly every 2 minutes) from the physical \
-                 weather station at {location}. These are real sensor measurements, NOT a \
-                 forecast. Each variable is returned as a parallel array ordered oldest-first; \
-                 element i of every array corresponds to the same sample, and the last element \
-                 is the most recent reading. Units: temperatures in °C, humidity in %, pressure \
-                 (QNH) in hPa, wind speed/gust in km/h, wind direction in meteorological \
-                 degrees, rainfall in mm, solar radiation in W/m². Takes no arguments."
+                "Recent measured-weather time series for the station at {location}: ~last 7 \
+                 hours, downsampled to <=48 points, parallel arrays ordered oldest-first (last \
+                 = most recent). Sensor data, not a forecast. Units: temperatures °C, humidity \
+                 %, pressure (QNH) hPa, wind speed/gust km/h, wind direction meteorological \
+                 degrees, rainfall mm, solar radiation W/m². No arguments."
             ),
             "inputSchema": no_arguments_schema(),
         }),
         json!({
             "name": "get_hourly_weather_forecast",
             "description": format!(
-                "Return the modeled hourly weather forecast for the next 48 hours at the \
-                 weather station's location ({location}), sourced from the Open-Meteo numerical \
-                 weather model. This is a FORECAST (predicted values), not measured data. \
-                 Returns an array of hourly entries, each with a UTC timestamp and: forecast \
-                 air temperature at 2 m (°C), precipitation (mm), wind speed and gusts at 10 m \
-                 (km/h), wind direction at 10 m (meteorological degrees) and total cloud cover \
-                 (%). Takes no arguments. Requires the station's latitude/longitude to be \
-                 configured on the server."
+                "Hourly forecast for the next 48 h at the station's location ({location}) from \
+                 the Open-Meteo model (predicted, not measured). Per hour: UTC time, air \
+                 temperature 2 m °C, precipitation mm, wind speed/gust 10 m km/h, wind \
+                 direction 10 m meteorological degrees, cloud cover %. No arguments; requires \
+                 station lat/lon configured."
             ),
             "inputSchema": no_arguments_schema(),
         }),
@@ -332,8 +324,54 @@ async fn tool_current_observation(state: &AppState) -> Result<Value, AppError> {
     }))
 }
 
+/// Target number of points the historical series is downsampled to, to keep tool
+/// payloads small enough for local LLM context windows.
+const HISTORY_TARGET_POINTS: usize = 48;
+
+/// Downsample by averaging consecutive buckets, preserving oldest-first order and
+/// rounding to keep the payload compact. Returns at most `target` points.
+fn downsample_mean(data: &[f64], target: usize) -> Vec<f64> {
+    if target == 0 || data.len() <= target {
+        return data.to_vec();
+    }
+    let chunk = data.len().div_ceil(target);
+    data.chunks(chunk)
+        .map(|c| {
+            let mean = c.iter().sum::<f64>() / c.len() as f64;
+            (mean * 100.0).round() / 100.0
+        })
+        .collect()
+}
+
+/// Downsample wind directions using vector (circular) averaging so that, e.g.,
+/// 350° and 10° average to 0° rather than 180°. Returns at most `target` points.
+fn downsample_degrees(data: &[f64], target: usize) -> Vec<f64> {
+    if target == 0 || data.len() <= target {
+        return data.to_vec();
+    }
+    let chunk = data.len().div_ceil(target);
+    data.chunks(chunk)
+        .map(|c| {
+            let (mut sin, mut cos) = (0.0, 0.0);
+            for &deg in c {
+                let rad = deg.to_radians();
+                sin += rad.sin();
+                cos += rad.cos();
+            }
+            let mut avg = sin.atan2(cos).to_degrees();
+            if avg < 0.0 {
+                avg += 360.0;
+            }
+            avg.round()
+        })
+        .collect()
+}
+
 async fn tool_historical_timeseries(state: &AppState) -> Result<Value, AppError> {
     let data = query_es(state).await?;
+    let n = HISTORY_TARGET_POINTS;
+    let temperature = downsample_mean(&data.temperature, n);
+    let sample_count = temperature.len();
     Ok(json!({
         "location": {
             "latitude_degrees": state.lat,
@@ -343,20 +381,20 @@ async fn tool_historical_timeseries(state: &AppState) -> Result<Value, AppError>
         "measurement_kind": "live_sensor_observation",
         "sampling": {
             "window": "approximately_last_7_hours",
-            "approximate_interval_seconds": 120,
             "ordering": "oldest_first_last_element_is_most_recent",
-            "sample_count": data.temperature.len(),
+            "downsampled": true,
+            "sample_count": sample_count,
         },
         "series": {
-            "outdoor_temperature_celsius": data.temperature,
-            "indoor_temperature_celsius": data.temperatureindoor,
-            "relative_humidity_percent": data.humidity,
-            "barometric_pressure_sea_level_qnh_hpa": data.qnh,
-            "wind_speed_kmh": data.windspeeds,
-            "wind_gust_kmh": data.windgusts,
-            "wind_direction_meteorological_degrees": data.winddirs,
-            "rainfall_mm": data.rain,
-            "solar_radiation_watts_per_square_meter": data.solarradiation,
+            "outdoor_temperature_celsius": temperature,
+            "indoor_temperature_celsius": downsample_mean(&data.temperatureindoor, n),
+            "relative_humidity_percent": downsample_mean(&data.humidity, n),
+            "barometric_pressure_sea_level_qnh_hpa": downsample_mean(&data.qnh, n),
+            "wind_speed_kmh": downsample_mean(&data.windspeeds, n),
+            "wind_gust_kmh": downsample_mean(&data.windgusts, n),
+            "wind_direction_meteorological_degrees": downsample_degrees(&data.winddirs, n),
+            "rainfall_mm": downsample_mean(&data.rain, n),
+            "solar_radiation_watts_per_square_meter": downsample_mean(&data.solarradiation, n),
         }
     }))
 }
